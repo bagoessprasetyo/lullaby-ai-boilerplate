@@ -1,7 +1,9 @@
 // app/api/voices/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from "next-auth";
 import { auth } from '@clerk/nextjs/server';
+
+// Add this export to explicitly mark the route as dynamic
+export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   try {
