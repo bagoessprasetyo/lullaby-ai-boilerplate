@@ -79,11 +79,11 @@ export function FAQSection({
   ...props
 }: FAQSectionProps) {
   return (
-    <div className={cn("w-full py-16 lg:py-24 bg-background", className)} {...props}>
+    <div className={cn("w-full py-16 lg:py-24 bg-white", className)} {...props}>
       <div className="container mx-auto px-4 md:px-6">
         <div className="grid lg:grid-cols-2 gap-10 lg:gap-16 items-start">
           {/* Left Column: Title, Description, Contact */}
-          <div className="flex flex-col gap-6 lg:gap-8 sticky top-24">
+          <div className="flex flex-col gap-6 lg:gap-8  top-24 bg-white">
             <div className="flex flex-col gap-3">
               <Badge variant="outline" className="w-fit">{subtitle}</Badge>
               <h2 className="text-3xl md:text-4xl font-bold tracking-tight">

@@ -111,8 +111,8 @@ function HowItWorks({
           </div>
 
           {/* Image Display */}
-          <div className="order-1 md:order-2">
-            <div className={cn("relative rounded-lg overflow-hidden shadow-lg", imageHeight)}>
+          <div className="order-1 md:order-2 w-full">
+            <div className={cn("relative rounded-lg overflow-hidden shadow-lg w-full", imageHeight)}>
               <AnimatePresence mode="wait">
                 {features.map(
                   (feature, index) =>
