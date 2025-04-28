@@ -13,8 +13,9 @@ export function StoryCreditsDisplay({
       avatar: string
     }
   }) {
-  const { data: profile, isLoading: isLoadingProfile, error: profileError } = useProfile(user?.id);
-  console.log('use profile ', user?.id);
+  // Pass user.id directly, as the parent component ensures it's available
+  const { data: profile, isLoading: isLoadingProfile, error: profileError } = useProfile(user.id); 
+  console.log('use profile hook called with user.id: ', user.id); // Log the actual ID passed
   return (
     <div className="px-4 py-2 border-t border-border">
       <p className="text-sm font-medium text-foreground">Story Credits</p>

@@ -71,22 +71,27 @@ const lullabyNavItems = [
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const [isCreateModalOpen, setIsCreateModalOpen] = React.useState(false);
-  const { user } = useUser(); // Fetch user data using Clerk hook
-  
-  // Prepare user data for NavUser, handling potential null values
-  const navUserData = user
-    ? {
+  const { user, isLoaded, isSignedIn } = useUser(); // Fetch user data and loading/signed-in state
+
+  // Prepare user data only when loaded and signed in
+  const navUserData = React.useMemo(() => {
+    if (isLoaded && isSignedIn && user) {
+      return {
         id: user.id,
         name: user.fullName || user.firstName || "User",
         email: user.primaryEmailAddress?.emailAddress || "No email",
-        avatar: user.imageUrl || "/avatars/default.png", // Provide a default avatar
-      }
-    : {
+        avatar: user.imageUrl || "/avatars/default.png",
+      };
+    } else {
+      // Return default/loading state or null if preferred
+      return {
         id: "",
-        name: "Guest",
+        name: "Loading...",
         email: "",
-        avatar: "/avatars/default.png", // Default for logged-out state
-      }
+        avatar: "/avatars/default.png",
+      };
+    }
+  }, [user, isLoaded, isSignedIn]);
 
   const handleStoryComplete = (data: any) => {
     console.log("Story creation submitted from modal:", data);
@@ -126,10 +131,18 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         {/* Remove NavProjects and NavDocuments if not needed */}
       </SidebarContent>
       <SidebarFooter>
-        {/* Use the new Story Credits Display component, render only when user.id is available */}
-        {user?.id && <StoryCreditsDisplay user={navUserData}/>}
-        {/* Pass the fetched user data to NavUser */}
-        <NavUser user={navUserData} />
+        {/* Render StoryCreditsDisplay and NavUser only when user is loaded and signed in */}
+        {isLoaded && isSignedIn && navUserData.id ? (
+          <>
+            <StoryCreditsDisplay user={navUserData} />
+            <NavUser user={navUserData} />
+          </>
+        ) : isLoaded ? (
+          // Optional: Show a loading state or guest view if needed
+          <div className="px-4 py-2 border-t border-border">
+             <p className="text-xs text-muted-foreground">Loading user...</p>
+          </div>
+        ) : null}
       </SidebarFooter>
       {/* Remove SidebarRail if not used */}
       {/* Render the modal */}

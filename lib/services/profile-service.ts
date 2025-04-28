@@ -22,11 +22,12 @@ export async function getProfile(userId: string) {
             .maybeSingle();
 
         // console.log('getMostPlayedprofiles user id ', userId);
-        console.log('getMostPlayedprofiles service ', profiles);
+        console.log('getProfile service result:', profiles); // Updated log message
 
-        return profiles || [];
+        // Return the profile object or null if not found
+        return profiles || null;
     } catch (error) {
-        console.error('Error fetching most played profiles:', error);
-        return [];
+        console.error('Error fetching profile:', error); // Updated log message
+        return null; // Return null on error as well, consistent with expected type
     }
 }
