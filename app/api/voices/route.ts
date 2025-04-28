@@ -2,8 +2,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 
-// Add this export to explicitly mark the route as dynamic
+// Force dynamic route to handle headers properly
 export const dynamic = 'force-dynamic';
+
+export const fetchCache = 'force-no-store';
+export const revalidate = 0;
 
 export async function GET(req: NextRequest) {
   try {
