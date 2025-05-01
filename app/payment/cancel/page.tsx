@@ -1,4 +1,5 @@
 // Add to app/pricing/page.tsx
+"use client";
 import { useSearchParams } from 'next/navigation'; // Make sure this is imported
 import { useEffect, useState } from 'react'; // If not already imported
 
