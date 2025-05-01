@@ -286,8 +286,8 @@ export const LULLABY_TIERS: PricingTier[] = [
     highlighted: false, // Decide if this should be highlighted
     productId: "premium-plus", // Set the productId for the Premium+ tier
     priceId: {
-      monthly: "price_1Pj9zzzzzzzzzzzzzzzzzzzzzz", // Replace with actual Stripe Price ID
-      yearly: "price_1Pj9aaaaaaaaaaaaaaaaaaaaaa", // Replace with actual Stripe Price ID
+      monthly: "prod_SDIq8jY9dWsz9G", // Replace with actual Stripe Price ID
+      yearly: "prod_SDIrstbnOuCuDy", // Replace with actual Stripe Price ID
     },
   },
 ];
