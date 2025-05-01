@@ -8,6 +8,7 @@ import { AuthListener } from "@/components/auth/AuthListener";
 import { AuthModal } from "@/components/auth/AuthModal";
 import { ThemeProvider } from "@/components/providers/ThemeProvider";
 import { Analytics } from "@vercel/analytics/react"
+import { SpeedInsights } from "@vercel/speed-insights/next"
 
 const geistSans = localFont({
   src: "./fonts/GeistVF.woff",
@@ -46,6 +47,7 @@ export default function RootLayout({
               <AuthListener />
               {children}
               <AuthModal />
+              <SpeedInsights/>
               <Analytics/>
               <Toaster />
             </ThemeProvider>
