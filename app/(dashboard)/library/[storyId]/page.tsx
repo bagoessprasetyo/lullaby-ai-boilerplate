@@ -39,7 +39,7 @@ export default async function StoryDetailPage({ params }: { params: { storyId: s
           <div className="grid md:grid-cols-2 gap-0 min-h-[70vh]">
             
             {/* Left Column: Image Carousel & Audio Player */}
-            <div className="relative p-6 md:p-8 lg:p-10 border-r border-border/20 flex flex-col justify-between bg-muted/5">
+            <div className="relative p-6 md:p-8 lg:p-10 border-r border-border/20 flex flex-col bg-muted/5">
               <div className="space-y-6">
                 {/* Story Title and Date */}
                 <div className="mb-2">
@@ -93,7 +93,7 @@ export default async function StoryDetailPage({ params }: { params: { storyId: s
 
               {/* Audio Player */}
               {story.audio_url && (
-                <div className="mt-auto pt-8">
+                <div className="pt-8">
                   <AudioPlayer src={story.audio_url.replace(/`/g, '')} title={story.title} />
                 </div>
               )}

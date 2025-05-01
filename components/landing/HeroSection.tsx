@@ -2,10 +2,13 @@
 // import Image from 'next/image';
 "use client"
 import { Button } from '@/components/ui/button';
-import { ArrowRight, Sparkles } from 'lucide-react';
+import { ArrowRight, Box, House, PanelsTopLeft, Sparkles } from 'lucide-react';
 import NewAudioPlayer from '../ui/NewAudioPlayer';
 import { useRouter } from 'next/navigation';
 import { useUser } from '@clerk/clerk-react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
+import { ScrollArea, ScrollBar } from '../ui/scroll-area';
+import { ID, US } from 'country-flag-icons/react/3x2'
 // import { AudioPlayer } from '@/components/ui/audio-player'; // <-- Import the new component
 
 export default function HeroSection() {
@@ -32,7 +35,7 @@ export default function HeroSection() {
               <Button 
                 size="lg" 
                 className="group hover:shadow-lg transition-all duration-300 ease-in-out transform hover:-translate-y-1"
-                onClick={() => router.push(user ? '/create' : '/auth/sign-in')}
+                onClick={() => router.push(user ? '/dashboard' : '/coming-soon')}
               >
                 {user ? (
                   <>
@@ -58,16 +61,49 @@ export default function HeroSection() {
             {/* --- End Custom Audio Player --- */}
 
           </div>
-
+          <Tabs defaultValue="tab-1">
+            <ScrollArea>
+              <TabsList className="mb-3 gap-1 bg-transparent">
+                <TabsTrigger
+                  value="tab-1"
+                  className="rounded-full data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-none"
+                >
+                  <US className="-ms-0.5 me-1.5 opacity-60 size-5"/>
+                 English
+                </TabsTrigger>
+                <TabsTrigger
+                  value="tab-2"
+                  className="rounded-full data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-none"
+                >
+                  <ID className="-ms-0.5 me-1.5 opacity-60 size-5"/>
+                  Indonesia
+                </TabsTrigger>
+              </TabsList>
+              <ScrollBar orientation="horizontal" />
+            </ScrollArea>
+            <TabsContent value="tab-1">
+              <div className="flex justify-start">
+                <NewAudioPlayer
+                    src={audioSrc}
+                    cover='https://res.cloudinary.com/dcx38wpwa/image/upload/v1742185123/story-app-stories/60bd34fb-e13d-4c24-bd3e-1f5a13454c4d-1.jpg'
+                    title="Joko and the Sooting Rain"
+                    artist="Daddy's Bedtime"
+                  />
+              </div>
+            </TabsContent>
+            <TabsContent value="tab-2">
+              <div className="flex justify-start">
+                <NewAudioPlayer
+                    src={audioSrc}
+                    cover='https://res.cloudinary.com/dcx38wpwa/image/upload/v1742185123/story-app-stories/60bd34fb-e13d-4c24-bd3e-1f5a13454c4d-1.jpg'
+                    title="Joko dan Hujan yang Menenangkan"
+                    artist="Daddy's Bedtime"
+                  />
+              </div>
+            </TabsContent>
+          </Tabs>
           {/* Visual Content */}
-          <div className="flex justify-start">
-            <NewAudioPlayer
-                src={audioSrc}
-                cover='https://res.cloudinary.com/dcx38wpwa/image/upload/v1742185123/story-app-stories/60bd34fb-e13d-4c24-bd3e-1f5a13454c4d-1.jpg'
-                title="Joko dan Hujan yang Menenangkan"
-                artist="Daddy's Bedtime"
-              />
-          </div>
+          
         </div>
       </div>
     </section>

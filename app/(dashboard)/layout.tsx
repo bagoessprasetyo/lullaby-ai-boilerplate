@@ -13,6 +13,7 @@ import {
 
 import { usePathname } from 'next/navigation';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { MobileDockMenu } from '@/components/MobileDockMenu'; // Import the new component
 
 export default function DashboardLayout({
   children
@@ -50,6 +51,8 @@ export default function DashboardLayout({
         </header>
         {children}
       </SidebarInset>
+      {/* Add the Mobile Dock Menu for smaller screens */}
+      <MobileDockMenu />
     </SidebarProvider>
   )
 }

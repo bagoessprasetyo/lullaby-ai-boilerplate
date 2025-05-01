@@ -1,62 +1,89 @@
-// app/api/stripe/checkout-session/route.ts
-import { auth } from '@clerk/nextjs/server';
-import { NextRequest, NextResponse } from 'next/server';
-import Stripe from 'stripe';
-
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+import { NextResponse, NextRequest } from 'next/server';
+import { cookies } from 'next/headers';
+import { createClient } from '@/lib/supabase/server'; // Use server client
+import { stripe } from '@/lib/stripe/server'; // Use server-side Stripe instance
+import { getURL } from '@/lib/utils';
 
 export async function POST(req: NextRequest) {
-  const { userId } = await auth();
-  
-  if (!userId) {
-    return new NextResponse(JSON.stringify({ error: 'Unauthorized: User not found' }), { status: 401 });
-  }
-
-  const { priceId, quantity = 1, metadata = {} } = await req.json();
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-
-  if (!priceId) {
-     return new NextResponse(JSON.stringify({ error: 'Missing priceId' }), { status: 400 });
-  }
+  const cookieStore = cookies();
+  const supabase = createClient();
 
   try {
-    // Optional: Check if user already has a Stripe customer ID in your DB
-    // let customerId = user.stripe_customer_id; // Assuming you store this
-    // if (!customerId) {
-    //    const customer = await stripe.customers.create({ email: user.email, metadata: { userId: user.id } });
-    //    customerId = customer.id;
-    //    // TODO: Save customerId to your Supabase user profile
-    // }
+    const { priceId } = await req.json();
 
+    // 1. Get user session
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      console.error('User not authenticated:', userError?.message);
+      return NextResponse.json({ error: 'User not authenticated' }, { status: 401 });
+    }
+
+    // 2. Retrieve or create Stripe customer
+    let customerId: string | undefined;
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('stripe_customer_id')
+      .eq('id', user.id)
+      .single();
+
+    if (profileError && profileError.code !== 'PGRST116') { // PGRST116: row not found
+      console.error('Error fetching profile:', profileError.message);
+      return NextResponse.json({ error: 'Could not fetch user profile' }, { status: 500 });
+    }
+
+    if (profile?.stripe_customer_id) {
+      customerId = profile.stripe_customer_id;
+    } else {
+      // Create a new Stripe customer
+      const customer = await stripe.customers.create({
+        email: user.email,
+        metadata: {
+          supabaseUUID: user.id,
+        },
+      });
+      customerId = customer.id;
+
+      // Update Supabase profile with the new customer ID
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({ stripe_customer_id: customerId })
+        .eq('id', user.id);
+
+      if (updateError) {
+        console.error('Error updating profile with Stripe customer ID:', updateError.message);
+        // Continue, but log the error. Checkout can proceed.
+      }
+    }
+
+    // 3. Create Stripe Checkout Session
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
-      billing_address_collection: 'required',
-      // customer: customerId, // Use existing customer if available
-      customer_email: userId, // Clerk will handle email association
       line_items: [
         {
           price: priceId,
-          quantity: quantity,
+          quantity: 1,
         },
       ],
-      mode: 'subscription', // or 'payment'
-      allow_promotion_codes: true,
-      success_url: `${appUrl}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${appUrl}/payment/cancelled`,
+      mode: 'subscription', // Assuming subscription model
+      customer: customerId,
+      success_url: `${getURL()}/dashboard?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${getURL()}/pricing`, // Redirect back to pricing page on cancel
       metadata: {
-        ...metadata,
-        userId: userId, // Crucial for linking payment to user in webhooks
+        supabaseUUID: user.id, // Include Supabase user ID in metadata
+        priceId: priceId,
       },
     });
 
     if (!session.id) {
-         throw new Error("Could not create Stripe session");
+        throw new Error('Could not create Stripe checkout session.');
     }
 
+    // 4. Return session ID
     return NextResponse.json({ sessionId: session.id });
 
-  } catch (err: any) {
-    console.error('Error creating Stripe checkout session:', err);
-    return new NextResponse(JSON.stringify({ error: { message: err.message } }), { status: 500 });
+  } catch (error: any) {
+    console.error('Stripe Checkout Session Error:', error.message);
+    return NextResponse.json({ error: error.message || 'An unexpected error occurred' }, { status: 500 });
   }
 }

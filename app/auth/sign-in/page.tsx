@@ -1,12 +1,27 @@
 // app/auth/sign-in/page.tsx
 "use client";
 
-import { SignIn } from '@clerk/nextjs';
+import { SignIn, useUser } from '@clerk/nextjs';
 import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { useEffect } from 'react';
 
 export default function SignInPage() {
   const { toast } = useToast();
+  const { user, isLoaded } = useUser();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (isLoaded && user) {
+      router.push('/dashboard');
+    }
+  }, [isLoaded, user, router]);
+
+  // Optional: Show a loading state or null while checking auth status
+  if (!isLoaded || user) {
+    return null; // Or a loading spinner
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-purple-50 to-white dark:from-gray-800 dark:to-gray-900">

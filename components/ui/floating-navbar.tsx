@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import Link from "next/link";
 import { useAuthModal } from "@/store/auth-modal-store";
 import { useUser } from "@clerk/clerk-react";
+import { useRouter } from 'next/navigation'; // Add this import
 
 export const FloatingNav = ({
   navItems,
@@ -25,6 +26,7 @@ export const FloatingNav = ({
   const { scrollYProgress } = useScroll();
   const { openModal } = useAuthModal();
   const { user } = useUser();
+  const router = useRouter(); // Initialize router
 
   const [visible, setVisible] = useState(false);
 
@@ -86,8 +88,14 @@ export const FloatingNav = ({
             <span className="hidden sm:block text-sm">{navItem.name}</span>
           </Link>
         ))}
-        <button  
-        onClick={openModal}
+        <button
+        onClick={() => {
+          if (user) {
+            router.push('/dashboard');
+          } else {
+            router.push('/coming-soon');
+          }
+        }}
         className="border text-sm font-medium relative border-neutral-200 dark:border-white/[0.2] text-black dark:text-white px-4 py-2 rounded-full">
           <span>{user ? 'Go to Dashboard' : 'Login'}</span>
           <span className="absolute inset-x-0 w-1/2 mx-auto -bottom-px bg-gradient-to-r from-transparent via-blue-500 to-transparent  h-px" />

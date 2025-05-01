@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import { CheckoutButton } from "@/components/shared/CheckoutButton"; // Import CheckoutButton
 
 export interface PricingTier {
   id?: string;
@@ -19,6 +20,8 @@ export interface PricingTier {
   cta: string;
   highlighted?: boolean;
   popular?: boolean;
+  productId?: string;
+  priceId?: Record<string, string>; // Add priceId for Stripe
 }
 
 interface PricingCardProps {
@@ -30,6 +33,7 @@ export function PricingCard({ tier, paymentFrequency }: PricingCardProps) {
   const price = tier.price[paymentFrequency];
   const isHighlighted = tier.highlighted;
   const isPopular = tier.popular;
+  const stripePriceId = tier.priceId?.[paymentFrequency]; // Get the price ID for the selected frequency
 
   return (
     <Card
@@ -92,13 +96,30 @@ export function PricingCard({ tier, paymentFrequency }: PricingCardProps) {
         </ul>
       </div>
 
-      <Button
-        variant={isHighlighted ? "secondary" : "default"}
-        className="w-full"
-      >
-        {tier.cta}
-        <ArrowRight className="ml-2 h-4 w-4" />
-      </Button>
+      {/* Conditionally render CheckoutButton or standard Button */}
+      {tier.id === 'free' ? (
+        <Button
+          variant={isHighlighted ? "secondary" : "default"}
+          className="w-full"
+          // Add onClick handler for free tier if needed, e.g., redirect to signup
+        >
+          {tier.cta}
+          <ArrowRight className="ml-2 h-4 w-4" />
+        </Button>
+      ) : stripePriceId ? (
+        <CheckoutButton
+          priceId={stripePriceId}
+          buttonText={tier.cta}
+        />
+      ) : (
+        <Button
+          variant={isHighlighted ? "secondary" : "default"}
+          className="w-full"
+          disabled // Disable if priceId is missing
+        >
+          {tier.cta} (Coming Soon)
+        </Button>
+      )}
     </Card>
   );
 }
@@ -204,7 +225,7 @@ export function PricingSection({
   );
 }
 
-// Define Lullaby.ai specific tiers
+// Define Lullaby.ai specific tiers with placeholder Stripe Price IDs
 export const LULLABY_TIERS: PricingTier[] = [
   {
     id: "free",
@@ -215,12 +236,14 @@ export const LULLABY_TIERS: PricingTier[] = [
     },
     description: "Start creating magical moments",
     features: [
-      "5 stories per month",
+      "2 stories per month",
       "Basic AI voices",
       "Short & Medium story length",
       "Standard themes",
     ],
     cta: "Get Started for Free",
+    productId: "free", // Set the productId for the Free tier
+    // No priceId needed for free tier
   },
   {
     id: "premium",
@@ -231,15 +254,19 @@ export const LULLABY_TIERS: PricingTier[] = [
     },
     description: "Unlock more creativity & features",
     features: [
-      "25 stories per month",
+      "20 stories per month",
       "All story lengths (Short, Medium, Long)",
       "Premium AI voices",
-      "Background music options",
-      "2 Custom voice profiles",
+      // "Background music options",
       "Advanced story themes",
     ],
     cta: "Go Premium",
     popular: true, // Mark Premium as popular
+    productId: "premium", // Set the productId for the Premium tier
+    priceId: {
+      monthly: "prod_SDIqoAq06lVnhR", // Replace with actual Stripe Price ID
+      yearly: "prod_SDIqv97or1eBiy", // Replace with actual Stripe Price ID
+    },
   },
   {
     id: "premium-plus",
@@ -250,13 +277,18 @@ export const LULLABY_TIERS: PricingTier[] = [
     },
     description: "For the ultimate storytelling experience",
     features: [
-      "50 stories per month",
+      "30 stories per month",
       "Everything in Premium",
-      "Up to 3 Custom voice profiles",
+      "Up to 1 Custom voice profiles",
       "Priority support",
     ],
     cta: "Choose Premium+",
     highlighted: false, // Decide if this should be highlighted
+    productId: "premium-plus", // Set the productId for the Premium+ tier
+    priceId: {
+      monthly: "price_1Pj9zzzzzzzzzzzzzzzzzzzzzz", // Replace with actual Stripe Price ID
+      yearly: "price_1Pj9aaaaaaaaaaaaaaaaaaaaaa", // Replace with actual Stripe Price ID
+    },
   },
 ];
 

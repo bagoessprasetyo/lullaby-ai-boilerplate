@@ -8,6 +8,7 @@ import { useAuthModal } from "@/store/auth-modal-store";
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { cn } from "@/lib/utils";
+import { LightPullThemeSwitcher } from "../ui/light-pull-theme-switcher";
 
 export default function Navbar() {
   const router = useRouter();
@@ -66,6 +67,7 @@ export default function Navbar() {
             )
           }))} 
         />
+        {/* <LightPullThemeSwitcher/> */}
       </div>
     </nav>
   );
