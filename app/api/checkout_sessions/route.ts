@@ -1,11 +1,20 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { stripe } from '@/lib/stripe'; // Your Stripe server-side instance
 import Stripe from 'stripe';
+// import { createClient } from '@/utils/supabase/server';
+import { createServiceRoleClient } from '@/lib/supabase/admin';
 
 export async function POST(req: NextRequest) {
   if (req.method !== 'POST') {
     return NextResponse.json({ error: 'Method Not Allowed' }, { status: 405 });
   }
+
+  // const supabase = createServiceRoleClient();
+  // const { data: { user }, error } = await supabase.auth.getUser();
+
+  // if (error || !user) {
+  //   return NextResponse.json({ error: 'User not authenticated' }, { status: 401 });
+  // }
 
   try {
     const { priceId } = await req.json();
