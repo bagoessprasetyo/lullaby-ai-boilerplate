@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { useCallback, useState, useEffect } from "react";
+import { useRouter } from 'next/navigation';
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,11 +20,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useToast } from "@/hooks/use-toast";
 import {
   ArrowRight,
   BookOpen,
   Camera,
   Compass,
+  Loader2,
   Moon,
   Play,
   Plus,
@@ -33,6 +36,7 @@ import {
   Upload,
   Wand2,
   X,
+  Volume2,
 } from "lucide-react";
 
 // --- Interfaces ---
@@ -44,10 +48,12 @@ interface StoryCharacter {
 
 interface StoryData {
   coverImages: File[];
+  imagePreviewUrls: string[];
   theme: string;
   characters: StoryCharacter[];
   language: string;
   voice: string;
+  duration: string;
 }
 
 interface StepProps {
@@ -56,17 +62,23 @@ interface StepProps {
   setStoryData: React.Dispatch<React.SetStateAction<StoryData>>;
 }
 
+interface Voice {
+  value: string;
+  label: string;
+  description: string;
+  language: string;
+  gender: string;
+  age: string;
+  accent: string;
+  preview_url: string | null;
+  category: string;
+  descriptive: string;
+}
+
 // Define static data outside component to avoid re-creation on render
 const languages = [
   { value: "en", label: "English" },
   { value: "id", label: "Indonesian" },
-];
-
-const voices = [
-  { value: "gentle-male", label: "Gentle Male", description: "A soft and soothing male voice." },
-  { value: "warm-female", label: "Warm Female", description: "A kind and comforting female voice." },
-  { value: "playful-child", label: "Playful Child", description: "An energetic and cheerful child's voice." },
-  { value: "calm-neutral", label: "Calm Neutral", description: "A steady and relaxing neutral voice." },
 ];
 
 // --- Step Components ---
@@ -81,12 +93,19 @@ function Step1UploadTheme({ storyData, setStoryData }: StepProps) {
 
   // Initialize previews from existing files on mount
   React.useEffect(() => {
-    const initialPreviews = storyData.coverImages.map(file => URL.createObjectURL(file));
-    setPreviews(initialPreviews);
-    // Cleanup function for initial previews
-    return () => {
-      initialPreviews.forEach(URL.revokeObjectURL);
-    };
+    // Use existing preview URLs if available, otherwise create new ones
+    if (storyData.imagePreviewUrls.length > 0) {
+      setPreviews(storyData.imagePreviewUrls);
+    } else {
+      const initialPreviews = storyData.coverImages.map(file => URL.createObjectURL(file));
+      setPreviews(initialPreviews);
+      // Update storyData with the new preview URLs
+      setStoryData(prev => ({ ...prev, imagePreviewUrls: initialPreviews }));
+      // Cleanup function for initial previews
+      return () => {
+        initialPreviews.forEach(URL.revokeObjectURL);
+      };
+    }
   }, []); // Run only once on mount
 
   const updatePreviewsAndFiles = (files: FileList | null) => {
@@ -109,7 +128,14 @@ function Step1UploadTheme({ storyData, setStoryData }: StepProps) {
       const updatedFiles = [...currentFiles, ...newFilesToAdd];
       const updatedPreviews = [...previews, ...newPreviewsToAdd];
 
-      setStoryData((prev) => ({ ...prev, coverImages: updatedFiles }));
+      console.log('Step 1 - Adding files:', newFilesToAdd.length);
+      console.log('Step 1 - Updated previews:', updatedPreviews);
+
+      setStoryData((prev) => ({ 
+        ...prev, 
+        coverImages: updatedFiles,
+        imagePreviewUrls: updatedPreviews 
+      }));
       setPreviews(updatedPreviews);
     }
 
@@ -136,7 +162,11 @@ function Step1UploadTheme({ storyData, setStoryData }: StepProps) {
     URL.revokeObjectURL(previews[index]);
 
     setPreviews(newPreviews);
-    setStoryData((prev) => ({ ...prev, coverImages: newFiles }));
+    setStoryData((prev) => ({ 
+      ...prev, 
+      coverImages: newFiles,
+      imagePreviewUrls: newPreviews 
+    }));
   };
 
   const handleThumbnailClick = () => {
@@ -159,31 +189,6 @@ function Step1UploadTheme({ storyData, setStoryData }: StepProps) {
     },
     [setStoryData, storyData.coverImages, previews],
   );
-
-  // fetch voices from API
-  const fetchVoices = async () => {
-    try {
-      const response = await fetch("/api/voices");
-      if (!response.ok) {
-        throw new Error("Failed to fetch voices");
-      }
-      const data = await response.json();
-      return data.voices;
-    } catch (error) {
-      console.error("Error fetching voices:", error);
-      return [];
-    }
-  }
-
-  // --- Render ---
-  const [voicesData, setVoicesData] = useState<{ value: string; label: string; description: string }[]>([]);
-  React.useEffect(() => {
-    const fetchVoicesData = async () => {
-      const data = await fetchVoices();
-      setVoicesData(data);
-    };
-    fetchVoicesData();
-  }, []);
 
   const themes = [
     { value: "adventure", label: "Adventure", icon: Compass },
@@ -286,8 +291,8 @@ function Step1UploadTheme({ storyData, setStoryData }: StepProps) {
   );
 }
 
-// Step 2: Characters, Language & Voice
-function Step2CharactersLangVoice({ storyData, setStoryData }: StepProps) {
+// Step 2: Characters, Language & Duration
+function Step2CharactersLanguage({ storyData, setStoryData }: StepProps) {
   const handleAddCharacter = () => {
     setStoryData(prev => ({ ...prev, characters: [...prev.characters, { name: "", description: "" }] }));
   };
@@ -303,25 +308,25 @@ function Step2CharactersLangVoice({ storyData, setStoryData }: StepProps) {
     setStoryData(prev => ({ ...prev, characters: updatedCharacters }));
   };
 
-  const handlePlayVoice = (voiceValue: string) => {
-    // TODO: Implement actual voice playback logic
-    console.log("Playing voice:", voiceValue);
-    // Example: const audio = new Audio(`/path/to/voice/${voiceValue}.mp3`); audio.play();
-  };
+  const durationOptions = [
+    { value: "short", label: "Short Story", description: "Less than 1 minute", time: "<1 min", tier: "free" },
+    { value: "medium", label: "Medium Story", description: "1-3 minutes", time: "1-3 min", tier: "premium" },
+    { value: "long", label: "Long Story", description: "5 minutes", time: "5 min", tier: "premium" },
+  ];
 
   return (
-    <div className="flex flex-col gap-8 md:grid md:grid-cols-2">
-      {/* Left: Character Form */}
+    <div className="space-y-6">
+      {/* Characters Section */}
       <div className="space-y-4">
         <div className="flex items-center justify-between">
-          <Label>Characters</Label>
+          <Label>Story Characters</Label>
           <Button type="button" size="sm" variant="outline" onClick={handleAddCharacter} disabled={storyData.characters.length >= 5}>
             <Plus className="mr-1 h-3 w-3 md:mr-2 md:h-4 md:w-4" /> 
             <span className="text-xs md:text-sm">Add Character</span>
           </Button>
         </div>
-        <p className="text-sm text-muted-foreground">Add up to 5 characters.</p>
-        <div className="space-y-3 max-h-[300px] md:max-h-[400px] overflow-y-auto pr-1 md:pr-2">
+        <p className="text-sm text-muted-foreground">Add up to 5 characters for your story.</p>
+        <div className="space-y-3 max-h-[200px] overflow-y-auto pr-1">
           {storyData.characters.map((char, index) => (
             <Card key={index} className="relative pt-4 bg-white">
               <Button
@@ -332,47 +337,47 @@ function Step2CharactersLangVoice({ storyData, setStoryData }: StepProps) {
               >
                 <X className="h-3 w-3 md:h-4 md:w-4" />
               </Button>
-              <CardContent className="space-y-3 p-3 md:p-4">
+              <CardContent className="space-y-3 p-3">
                 <div className="space-y-1">
-                  <Label htmlFor={`character-name-${index}`} className="text-slate-800 text-xs md:text-sm">Name</Label>
+                  <Label htmlFor={`character-name-${index}`} className="text-slate-800 text-xs">Name</Label>
                   <Input
                     id={`character-name-${index}`}
                     placeholder={`Character ${index + 1} Name`}
                     value={char.name}
                     onChange={(e) => handleCharacterChange(index, 'name', e.target.value)}
-                    className="h-8 md:h-10 text-sm"
+                    className="h-8 text-sm"
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label htmlFor={`character-desc-${index}`} className="text-slate-800 text-xs md:text-sm">Description</Label>
+                  <Label htmlFor={`character-desc-${index}`} className="text-slate-800 text-xs">Description</Label>
                   <Textarea
                     id={`character-desc-${index}`}
                     placeholder="Brief description (e.g., brave knight, curious cat)"
                     value={char.description}
                     onChange={(e) => handleCharacterChange(index, 'description', e.target.value)}
-                    className="min-h-[40px] md:min-h-[60px] text-sm resize-none"
+                    className="min-h-[40px] text-sm resize-none"
                   />
                 </div>
               </CardContent>
             </Card>
           ))}
           {storyData.characters.length === 0 && (
-            <p className="text-sm text-muted-foreground text-center py-4">No characters added.</p>
+            <p className="text-sm text-muted-foreground text-center py-4">No characters added yet. Click "Add Character" to get started.</p>
           )}
         </div>
       </div>
 
-      {/* Right: Language & Voice */}
-      <div className="space-y-5 mt-4 md:mt-0">
+      {/* Language & Duration Section */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Language Selection */}
         <div className="space-y-2">
-          <Label htmlFor="language-select" className="text-sm">Language</Label>
-          <p className="text-xs md:text-sm text-muted-foreground">Select the story language.</p>
+          <Label htmlFor="language-select" className="text-sm">Story Language</Label>
+          <p className="text-xs text-muted-foreground">Choose the language for your story narration.</p>
           <Select
             value={storyData.language}
             onValueChange={(value) => setStoryData(prev => ({ ...prev, language: value }))}
           >
-            <SelectTrigger id="language-select" className="h-9 md:h-10">
+            <SelectTrigger id="language-select" className="h-9">
               <SelectValue placeholder="Select language" />
             </SelectTrigger>
             <SelectContent>
@@ -383,44 +388,46 @@ function Step2CharactersLangVoice({ storyData, setStoryData }: StepProps) {
           </Select>
         </div>
 
-        {/* Voice Selection */}
-        <div className="space-y-2 max-h-[250px] md:max-h-[400px] overflow-y-auto pr-1">
-          <Label className="text-sm">Voice Selection</Label>
-          <p className="text-xs md:text-sm text-muted-foreground">Choose a voice.</p>
+        {/* Duration Selection */}
+        <div className="space-y-2">
+          <Label className="text-sm">Story Duration</Label>
+          <p className="text-xs text-muted-foreground">Choose how long your story should be.</p>
           <RadioGroup
-            value={storyData.voice}
-            onValueChange={(value) => setStoryData(prev => ({ ...prev, voice: value }))}
-            className="grid grid-cols-1 gap-2 md:gap-3"
+            value={storyData.duration}
+            onValueChange={(value) => setStoryData(prev => ({ ...prev, duration: value }))}
+            className="space-y-2"
           >
-            {voices.map((voice) => (
+            {durationOptions.map((option) => (
               <Label
-                key={voice.value}
-                htmlFor={`voice-${voice.value}`}
+                key={option.value}
+                htmlFor={`duration-${option.value}`}
                 className={cn(
-                  "flex cursor-pointer items-center justify-between rounded-md border border-muted p-2 md:p-3 hover:border-primary/50",
-                  storyData.voice === voice.value && "border-primary bg-primary/5",
+                  "flex cursor-pointer items-center justify-between rounded-md border border-muted p-3 hover:border-primary/50",
+                  storyData.duration === option.value && "border-primary bg-primary/5",
+                  option.tier === "premium" && "opacity-60" // Style premium options differently
                 )}
               >
-                <div className="flex flex-col items-start gap-0.5 md:gap-1">
-                  <div className="flex items-center gap-2">
-                    <RadioGroupItem value={voice.value} id={`voice-${voice.value}`} className="sr-only" />
-                    <span className="text-xs md:text-sm font-medium">{voice.label}</span>
+                <div className="flex items-center space-x-3">
+                  <RadioGroupItem 
+                    value={option.value} 
+                    id={`duration-${option.value}`}
+                    disabled={option.tier === "premium"} // Disable premium for now
+                  />
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium">{option.label}</span>
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">
+                        {option.time}
+                      </span>
+                      {option.tier === "premium" && (
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">
+                          Premium
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">{option.description}</p>
                   </div>
-                  <p className="text-[10px] md:text-xs text-muted-foreground pl-4 md:pl-6">{voice.description}</p>
                 </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6 md:h-7 md:w-7 text-muted-foreground hover:text-primary"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    handlePlayVoice(voice.value);
-                  }}
-                >
-                  <Play className="h-3 w-3 md:h-4 md:w-4" />
-                </Button>
               </Label>
             ))}
           </RadioGroup>
@@ -430,31 +437,209 @@ function Step2CharactersLangVoice({ storyData, setStoryData }: StepProps) {
   );
 }
 
-// Step 3: Preview & Create
-function Step3PreviewCreate({ storyData }: StepProps) {
-  // Generate temporary URLs for preview if they don't exist
-  const imagePreviews = React.useMemo(() => {
-    return storyData.coverImages.map(file => {
-      if ((file as any).preview) return (file as any).preview;
-      try {
-        return URL.createObjectURL(file);
-      } catch (error) {
-        console.error("Error creating object URL for preview:", error);
-        return null;
-      }
-    }).filter(url => url !== null) as string[];
-  }, [storyData.coverImages]);
+// Step 3: Voice Selection (with subscription restrictions)
+function Step3VoiceSelection({ storyData, setStoryData }: StepProps) {
+  const [voices, setVoices] = useState<Voice[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [userTier, setUserTier] = useState<string>('free'); // TODO: Get from actual user profile
 
-  // Cleanup object URLs on component unmount
-  React.useEffect(() => {
-    return () => {
-      imagePreviews.forEach(url => {
-        if (url.startsWith('blob:')) {
-          URL.revokeObjectURL(url);
+  // Fetch voices when component mounts or language changes
+  useEffect(() => {
+    const fetchVoices = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        console.log('Fetching voices for language:', storyData.language);
+        
+        const response = await fetch('/api/voices');
+        if (!response.ok) {
+          throw new Error('Failed to fetch voices');
         }
-      });
+        
+        const data = await response.json();
+        console.log('Received voices data:', data);
+        
+        // Filter voices by selected language
+        let filteredVoices = data.voices.filter((voice: Voice) => 
+          voice.language === storyData.language
+        );
+
+        // For free users, only show default/fallback voices
+        if (userTier === 'free') {
+          // Add default voices for free users
+          const defaultVoices = [
+            {
+              value: `default-${storyData.language}-male`,
+              label: `Default Male Voice`,
+              description: `A professional ${storyData.language === 'id' ? 'Indonesian' : 'English'} male voice for storytelling`,
+              language: storyData.language,
+              gender: 'male',
+              age: 'adult',
+              accent: 'standard',
+              preview_url: null,
+              category: 'default',
+              descriptive: 'professional'
+            },
+            {
+              value: `default-${storyData.language}-female`,
+              label: `Default Female Voice`,
+              description: `A professional ${storyData.language === 'id' ? 'Indonesian' : 'English'} female voice for storytelling`,
+              language: storyData.language,
+              gender: 'female',
+              age: 'adult',
+              accent: 'standard',
+              preview_url: null,
+              category: 'default',
+              descriptive: 'professional'
+            }
+          ];
+          filteredVoices = defaultVoices;
+        }
+        
+        setVoices(filteredVoices);
+        
+        // Auto-select first voice if none selected
+        if (!storyData.voice && filteredVoices.length > 0) {
+          setStoryData(prev => ({ ...prev, voice: filteredVoices[0].value }));
+        }
+        
+      } catch (err: any) {
+        console.error('Error fetching voices:', err);
+        setError(err.message);
+      } finally {
+        setLoading(false);
+      }
     };
-  }, [imagePreviews]);
+
+    fetchVoices();
+  }, [storyData.language]);
+
+  const handlePlayVoice = (voiceValue: string) => {
+    const voice = voices.find(v => v.value === voiceValue);
+    if (voice?.preview_url) {
+      console.log('Playing voice preview:', voice.preview_url);
+      const audio = new Audio(voice.preview_url);
+      audio.play().catch(console.error);
+    } else {
+      console.log('No preview available for voice:', voiceValue);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <div className="text-center space-y-3">
+          <Loader2 className="w-6 h-6 animate-spin mx-auto" />
+          <p className="text-sm text-muted-foreground">Loading available voices...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="text-center py-12 space-y-3">
+        <p className="text-sm text-red-600">Error loading voices: {error}</p>
+        <p className="text-xs text-muted-foreground">Using fallback voice options.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <Label className="text-base">Choose Your Narrator Voice</Label>
+        <p className="text-sm text-muted-foreground mt-1">
+          Select a voice for your {languages.find(l => l.value === storyData.language)?.label} story.
+        </p>
+        {userTier === 'free' && (
+          <div className="mt-3 p-3 rounded-lg bg-amber-50 border border-amber-200">
+            <p className="text-sm text-amber-800">
+              <strong>Free Plan:</strong> You have access to our default professional voices. 
+              Upgrade to Premium to access custom ElevenLabs voices and longer stories.
+            </p>
+          </div>
+        )}
+      </div>
+
+      {voices.length === 0 ? (
+        <div className="text-center py-8">
+          <p className="text-sm text-muted-foreground">No voices available for {storyData.language}</p>
+        </div>
+      ) : (
+        <RadioGroup
+          value={storyData.voice}
+          onValueChange={(value) => setStoryData(prev => ({ ...prev, voice: value }))}
+          className="grid grid-cols-1 gap-3"
+        >
+          {voices.map((voice) => (
+            <Label
+              key={voice.value}
+              htmlFor={`voice-${voice.value}`}
+              className={cn(
+                "flex cursor-pointer items-start justify-between rounded-lg border border-muted p-4 hover:border-primary/50 transition-colors",
+                storyData.voice === voice.value && "border-primary bg-primary/5",
+              )}
+            >
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-3 mb-2">
+                  <RadioGroupItem value={voice.value} id={`voice-${voice.value}`} />
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-medium text-sm">{voice.label}</span>
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">
+                        {voice.gender} • {voice.age}
+                      </span>
+                      {voice.category === 'default' && (
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700">
+                          Free
+                        </span>
+                      )}
+                      {voice.category === 'professional' && userTier === 'premium' && (
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">
+                          Premium
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      {voice.description}
+                    </p>
+                  </div>
+                </div>
+              </div>
+              
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-8 w-8 p-0 text-muted-foreground hover:text-primary flex-shrink-0"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handlePlayVoice(voice.value);
+                }}
+                disabled={!voice.preview_url}
+              >
+                <Volume2 className="h-4 w-4" />
+                <span className="sr-only">Preview voice</span>
+              </Button>
+            </Label>
+          ))}
+        </RadioGroup>
+      )}
+    </div>
+  );
+}
+
+// Step 4: Preview & Create (was Step 3)
+function Step4PreviewCreate({ storyData }: StepProps) {
+  // Use the preserved preview URLs from storyData
+  const imagePreviews = storyData.imagePreviewUrls;
+  
+  // Debug logging
+  console.log('Step 4 - coverImages:', storyData.coverImages.length);
+  console.log('Step 4 - imagePreviewUrls:', storyData.imagePreviewUrls.length);
 
   return (
     <div className="space-y-4 md:space-y-6">
@@ -493,8 +678,12 @@ function Step3PreviewCreate({ storyData }: StepProps) {
               <p className="text-gray-800">{languages.find(l => l.value === storyData.language)?.label || <span className="text-muted-foreground italic">Not selected</span>}</p>
             </div>
             <div className="space-y-1">
+              <p className="font-medium text-gray-600">Duration:</p>
+              <p className="text-gray-800 capitalize">{storyData.duration ? `${storyData.duration} story` : <span className="text-muted-foreground italic">Not selected</span>}</p>
+            </div>
+            <div className="space-y-1">
               <p className="font-medium text-gray-600">Voice:</p>
-              <p className="text-gray-800">{voices.find(v => v.value === storyData.voice)?.label || <span className="text-muted-foreground italic">Not selected</span>}</p>
+              <p className="text-gray-800">{storyData.voice ? 'Selected' : <span className="text-muted-foreground italic">Not selected</span>}</p>
             </div>
           </div>
 
@@ -533,37 +722,112 @@ interface StoryCreationWizardProps {
 
 export function StoryCreationWizardModal({ open, onOpenChange, onComplete }: StoryCreationWizardProps) {
   const [step, setStep] = useState(1);
+  const [loading, setLoading] = useState(false);
   const [storyData, setStoryData] = useState<StoryData>({
     coverImages: [],
+    imagePreviewUrls: [],
     theme: "adventure",
     characters: [],
     language: "en",
-    voice: "gentle-male",
+    voice: "",
+    duration: "short",
   });
 
-  const totalSteps = 3;
+  const router = useRouter();
+  const { toast } = useToast();
+  const totalSteps = 4; // Updated to 4 steps
 
   const updateStoryData = useCallback((key: keyof StoryData | string, value: any) => {
     setStoryData((prev) => ({ ...prev, [key]: value }));
   }, []);
 
-  const handleContinue = () => {
+  const handleContinue = async () => {
     if (step < totalSteps) {
       setStep(step + 1);
     } else {
-      console.log("Final Story Data:", storyData);
-      onComplete?.(storyData);
-      onOpenChange(false);
-      // Reset state for next time
-      setStep(1);
-      setStoryData({
-        coverImages: [],
-        theme: "adventure",
-        characters: [],
-        language: "en",
-        voice: "gentle-male",
-      });
+      // Final step - create the story
+      await handleStoryComplete();
     }
+  };
+
+  const handleStoryComplete = async () => {
+    setLoading(true);
+    
+    try {
+      console.log("Creating story with data:", storyData);
+
+      // Convert File objects to form data for API
+      const formData = new FormData();
+      
+      // Add story data
+      formData.append('storyData', JSON.stringify({
+        theme: storyData.theme,
+        characters: storyData.characters,
+        language: storyData.language,
+        voice: storyData.voice,
+        duration: storyData.duration
+      }));
+
+      // Add image files
+      storyData.coverImages.forEach((file, index) => {
+        formData.append(`coverImage_${index}`, file);
+      });
+
+      const response = await fetch('/api/stories/create', {
+        method: 'POST',
+        body: formData
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to create story');
+      }
+
+      const { storyId } = await response.json();
+      
+      // Close modal first
+      onOpenChange(false);
+      
+      // Show success message
+      toast({
+        title: "Story Creation Started!",
+        description: "Your story is being generated. You'll be redirected to the progress page.",
+      });
+
+      // Reset form state
+      resetForm();
+
+      // Redirect to processing page
+      router.push(`/story/creating/${storyId}`);
+
+      // Call onComplete if provided (optional)
+      onComplete?.(storyData);
+
+    } catch (error: any) {
+      console.error('Story creation error:', error);
+      
+      toast({
+        title: "Creation Failed",
+        description: error.message || "Failed to create story. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const resetForm = () => {
+    setStep(1);
+    setStoryData({
+      coverImages: [],
+      imagePreviewUrls: [],
+      theme: "adventure",
+      characters: [],
+      language: "en",
+      voice: "",
+      duration: "short",
+    });
+    setLoading(false);
   };
 
   const handleBack = () => {
@@ -576,12 +840,14 @@ export function StoryCreationWizardModal({ open, onOpenChange, onComplete }: Sto
   useEffect(() => {
     if (!open) {
       setStep(1);
+      setLoading(false);
     }
   }, [open]);
 
   const stepTitles = [
     "Upload Image & Theme",
-    "Characters, Language & Voice",
+    "Characters, Language & Duration", 
+    "Voice Selection",
     "Preview & Create",
   ];
 
@@ -590,9 +856,11 @@ export function StoryCreationWizardModal({ open, onOpenChange, onComplete }: Sto
       case 1:
         return <Step1UploadTheme storyData={storyData} setStoryData={setStoryData} updateStoryData={updateStoryData} />;
       case 2:
-        return <Step2CharactersLangVoice storyData={storyData} setStoryData={setStoryData} updateStoryData={updateStoryData} />;
+        return <Step2CharactersLanguage storyData={storyData} setStoryData={setStoryData} updateStoryData={updateStoryData} />;
       case 3:
-        return <Step3PreviewCreate storyData={storyData} setStoryData={setStoryData} updateStoryData={updateStoryData} />;
+        return <Step3VoiceSelection storyData={storyData} setStoryData={setStoryData} updateStoryData={updateStoryData} />;
+      case 4:
+        return <Step4PreviewCreate storyData={storyData} setStoryData={setStoryData} updateStoryData={updateStoryData} />;
       default:
         return null;
     }
@@ -633,7 +901,13 @@ export function StoryCreationWizardModal({ open, onOpenChange, onComplete }: Sto
             {/* Action Buttons */}
             <div className="flex gap-2 w-full sm:w-auto order-1 sm:order-2">
               {step > 1 && (
-                <Button type="button" variant="outline" onClick={handleBack} className="flex-1 sm:flex-none h-9 text-xs md:text-sm">
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  onClick={handleBack} 
+                  className="flex-1 sm:flex-none h-9 text-xs md:text-sm"
+                  disabled={loading}
+                >
                   Back
                 </Button>
               )}
@@ -641,35 +915,24 @@ export function StoryCreationWizardModal({ open, onOpenChange, onComplete }: Sto
                 type="button" 
                 onClick={handleContinue} 
                 className="group flex-1 sm:flex-none h-9 text-xs md:text-sm"
+                disabled={loading}
               >
-                {step === totalSteps ? "Create Story" : "Continue"}
-                {step < totalSteps && <ArrowRight className="ml-1 md:ml-2 h-3 w-3 md:h-4 md:w-4 opacity-60 transition-transform group-hover:translate-x-0.5" />}
+                {loading ? (
+                  <>
+                    <Loader2 className="mr-2 h-3 w-3 md:h-4 md:w-4 animate-spin" />
+                    Creating...
+                  </>
+                ) : (
+                  <>
+                    {step === totalSteps ? "Create Story" : "Continue"}
+                    {step < totalSteps && <ArrowRight className="ml-1 md:ml-2 h-3 w-3 md:h-4 md:w-4 opacity-60 transition-transform group-hover:translate-x-0.5" />}
+                  </>
+                )}
               </Button>
             </div>
           </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-
-// Example usage
-export default function StoryCreationExample() {
-  const [open, setOpen] = useState(false);
-  
-  const handleComplete = (data: StoryData) => {
-    console.log("Story created:", data);
-    // Handle the completed story data
-  };
-  
-  return (
-    <div className="p-4 flex justify-center">
-      <Button onClick={() => setOpen(true)}>Create New Story</Button>
-      <StoryCreationWizardModal 
-        open={open} 
-        onOpenChange={setOpen} 
-        onComplete={handleComplete} 
-      />
-    </div>
   );
 }
