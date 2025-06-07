@@ -1,12 +1,23 @@
+// import { createServiceRoleClient } from "../supabase/admin";
+'use server'
+import { auth } from "@clerk/nextjs/server";
 import { createServiceRoleClient } from "../supabase/admin";
 
-export async function getProfile(userId: string) {
+export async function getProfile(user_id: string) {
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error('Supabase service role key is missing from environment variables');
+  }
+  const { userId } = await auth();
+  
+//   if (!user_id) {
+//     return { error: { message: 'Unauthorized - No Clerk user session' } };
+//   }
     if(!userId) {
         return [];
     }
     try {
-        const supabase = createServiceRoleClient();
-        const { data: profiles } = await supabase
+        const adminClient = createServiceRoleClient();
+        const { data: profiles } = await adminClient
             .from('profiles')
             .select(`
                 id,

@@ -1,5 +1,6 @@
 "use client"
 
+import React, { useState, cloneElement, isValidElement } from 'react'; // Import cloneElement and isValidElement
 console.log('[DashboardLayout] Rendering started.'); // Add log to check if dashboard layout renders
 
 import { AppSidebar } from "@/components/app-sidebar"
@@ -10,6 +11,7 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/ui/sidebar"
+import { FloatingStoryPlayer, FloatingPlayerStory } from '@/components/ui/floating-story-player'; // Import the player and its story type
 
 import { usePathname } from 'next/navigation';
 import { ThemeToggle } from '@/components/ThemeToggle';
@@ -21,8 +23,34 @@ export default function DashboardLayout({
   children: React.ReactNode
 }) {
   console.log('[DashboardLayout] Inside component function.'); // Add log inside the function
+  
   const pathname = usePathname();
   const currentPage = pathname.split('/').pop() || 'Dashboard';
+
+  // State for the floating player
+  const [currentStory, setCurrentStory] = useState<FloatingPlayerStory | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+
+  // Handlers for the player (will be passed down or managed via context later)
+  const handlePlayStory = (story: FloatingPlayerStory) => {
+    console.log('[DashboardLayout] Playing story:', story.id);
+    setCurrentStory(story);
+    setIsPlaying(true);
+  };
+
+  const handlePlayPause = () => {
+    console.log('[DashboardLayout] Toggling play/pause. Current state:', isPlaying);
+    setIsPlaying(!isPlaying);
+  };
+
+  const handleClosePlayer = () => {
+    console.log('[DashboardLayout] Closing player.');
+    setCurrentStory(null);
+    setIsPlaying(false);
+  };
+  console.log('[DashboardLayout] Inside component function.', currentStory); // Add log inside the function
+  // TODO: Pass handlePlayStory down to children or use Context API / Zustand
+
   return (
     <SidebarProvider>
       <AppSidebar />
@@ -49,10 +77,19 @@ export default function DashboardLayout({
             <ThemeToggle />
           </div>
         </header>
-        {children}
+        {/* Pass handlePlayStory down via props using cloneElement */} 
+        {isValidElement(children) ? cloneElement(children as React.ReactElement<any>, { handlePlayStory }) : children}
       </SidebarInset>
       {/* Add the Mobile Dock Menu for smaller screens */}
       <MobileDockMenu />
+      {/* Render the Floating Player */}
+      <FloatingStoryPlayer
+        currentStory={currentStory}
+        isPlaying={isPlaying}
+        onPlayPause={handlePlayPause}
+        onClose={handleClosePlayer}
+        // onNext and onPrevious can be added later for playlist functionality
+      />
     </SidebarProvider>
   )
 }

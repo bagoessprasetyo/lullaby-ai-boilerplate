@@ -17,7 +17,7 @@ type Profile = {
 };
 
 export function useProfile(userId: string | undefined) {
-    const supabase = createClient(); // Get Supabase client instance
+    // const supabase = createClient(); // Get Supabase client instance
 
     // Use TanStack Query's useQuery hook
     return useQuery<Profile | null>({
