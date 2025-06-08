@@ -9,7 +9,7 @@ import {
   useMemo,
   useCallback,
 } from "react";
-import { motion, AnimatePresence } from "motion/react";
+import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import React from "react";
 

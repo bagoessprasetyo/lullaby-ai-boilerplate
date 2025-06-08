@@ -1,3 +1,4 @@
+// components/StoryCreationWizardModal.tsx
 "use client";
 
 import * as React from "react";
@@ -12,7 +13,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogClose,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,15 +28,17 @@ import {
   Compass,
   Loader2,
   Moon,
-  Play,
   Plus,
   Rocket,
   Search,
-  Trash2,
   Upload,
   Wand2,
   X,
   Volume2,
+  Baby,
+  Users,
+  GraduationCap,
+  Heart
 } from "lucide-react";
 
 // --- Interfaces ---
@@ -54,6 +56,8 @@ interface StoryData {
   language: string;
   voice: string;
   duration: string;
+  targetAge: string;
+  customPrompt?: string;
 }
 
 interface StepProps {
@@ -75,7 +79,14 @@ interface Voice {
   descriptive: string;
 }
 
-// Define static data outside component to avoid re-creation on render
+// Main modal props interface (FIXED TypeScript interface)
+interface StoryCreationWizardProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onComplete?: (storyData: StoryData) => void;
+}
+
+// Static data
 const languages = [
   { value: "en", label: "English" },
   { value: "id", label: "Indonesian" },
@@ -93,20 +104,17 @@ function Step1UploadTheme({ storyData, setStoryData }: StepProps) {
 
   // Initialize previews from existing files on mount
   React.useEffect(() => {
-    // Use existing preview URLs if available, otherwise create new ones
     if (storyData.imagePreviewUrls.length > 0) {
       setPreviews(storyData.imagePreviewUrls);
     } else {
       const initialPreviews = storyData.coverImages.map(file => URL.createObjectURL(file));
       setPreviews(initialPreviews);
-      // Update storyData with the new preview URLs
       setStoryData(prev => ({ ...prev, imagePreviewUrls: initialPreviews }));
-      // Cleanup function for initial previews
       return () => {
         initialPreviews.forEach(URL.revokeObjectURL);
       };
     }
-  }, []); // Run only once on mount
+  }, []);
 
   const updatePreviewsAndFiles = (files: FileList | null) => {
     if (!files) return;
@@ -128,9 +136,6 @@ function Step1UploadTheme({ storyData, setStoryData }: StepProps) {
       const updatedFiles = [...currentFiles, ...newFilesToAdd];
       const updatedPreviews = [...previews, ...newPreviewsToAdd];
 
-      console.log('Step 1 - Adding files:', newFilesToAdd.length);
-      console.log('Step 1 - Updated previews:', updatedPreviews);
-
       setStoryData((prev) => ({ 
         ...prev, 
         coverImages: updatedFiles,
@@ -139,7 +144,6 @@ function Step1UploadTheme({ storyData, setStoryData }: StepProps) {
       setPreviews(updatedPreviews);
     }
 
-    // Return cleanup function for the newly added previews
     return () => {
       newPreviewsToAdd.forEach(URL.revokeObjectURL);
     };
@@ -147,18 +151,15 @@ function Step1UploadTheme({ storyData, setStoryData }: StepProps) {
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     updatePreviewsAndFiles(e.target.files);
-    // Reset file input to allow selecting the same file again if needed
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
   };
 
   const handleRemove = (index: number) => {
-    // Create new arrays by filtering
     const newPreviews = previews.filter((_, i) => i !== index);
     const newFiles = storyData.coverImages.filter((_, i) => i !== index);
 
-    // Revoke the URL of the removed preview
     URL.revokeObjectURL(previews[index]);
 
     setPreviews(newPreviews);
@@ -291,8 +292,8 @@ function Step1UploadTheme({ storyData, setStoryData }: StepProps) {
   );
 }
 
-// Step 2: Characters, Language & Duration
-function Step2CharactersLanguage({ storyData, setStoryData }: StepProps) {
+// Step 2: Characters, Age & Settings (Enhanced)
+function Step2CharactersAge({ storyData, setStoryData }: StepProps) {
   const handleAddCharacter = () => {
     setStoryData(prev => ({ ...prev, characters: [...prev.characters, { name: "", description: "" }] }));
   };
@@ -308,24 +309,132 @@ function Step2CharactersLanguage({ storyData, setStoryData }: StepProps) {
     setStoryData(prev => ({ ...prev, characters: updatedCharacters }));
   };
 
+  const ageGroups = [
+    { 
+      value: "2-4", 
+      label: "Toddlers (2-4 years)", 
+      icon: Baby,
+      description: "Simple, repetitive stories with familiar concepts",
+      color: "bg-pink-50 border-pink-200 text-pink-800"
+    },
+    { 
+      value: "3-5", 
+      label: "Preschoolers (3-5 years)", 
+      icon: Heart,
+      description: "Interactive stories with basic learning and emotions",
+      color: "bg-purple-50 border-purple-200 text-purple-800"
+    },
+    { 
+      value: "5-7", 
+      label: "Early Elementary (5-7 years)", 
+      icon: BookOpen,
+      description: "Adventure stories with problem-solving and friendship",
+      color: "bg-blue-50 border-blue-200 text-blue-800"
+    },
+    { 
+      value: "6-10", 
+      label: "Elementary (6-10 years)", 
+      icon: GraduationCap,
+      description: "Complex narratives with moral lessons and character growth",
+      color: "bg-green-50 border-green-200 text-green-800"
+    },
+    { 
+      value: "mixed", 
+      label: "Mixed Ages (3-10 years)", 
+      icon: Users,
+      description: "Multi-layered stories that engage all family members",
+      color: "bg-amber-50 border-amber-200 text-amber-800"
+    }
+  ];
+
   const durationOptions = [
-    { value: "short", label: "Short Story", description: "Less than 1 minute", time: "<1 min", tier: "free" },
-    { value: "medium", label: "Medium Story", description: "1-3 minutes", time: "1-3 min", tier: "premium" },
-    { value: "long", label: "Long Story", description: "5 minutes", time: "5 min", tier: "premium" },
+    { 
+      value: "short", 
+      label: "Short Story", 
+      description: getAgeSpecificDuration("short", storyData.targetAge),
+      time: getAgeSpecificTime("short", storyData.targetAge), 
+      tier: "free" 
+    },
+    { 
+      value: "medium", 
+      label: "Medium Story", 
+      description: getAgeSpecificDuration("medium", storyData.targetAge),
+      time: getAgeSpecificTime("medium", storyData.targetAge), 
+      tier: "free" 
+    },
+    { 
+      value: "long", 
+      label: "Long Story", 
+      description: getAgeSpecificDuration("long", storyData.targetAge),
+      time: getAgeSpecificTime("long", storyData.targetAge), 
+      tier: "premium" 
+    },
   ];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
+      {/* Age Group Selection */}
+      <div className="space-y-4">
+        <div>
+          <Label className="text-base font-medium">Who is this story for?</Label>
+          <p className="text-sm text-muted-foreground mt-1">
+            Choose the age group to customize vocabulary, themes, and complexity.
+          </p>
+        </div>
+        
+        <RadioGroup
+          value={storyData.targetAge}
+          onValueChange={(value) => setStoryData(prev => ({ ...prev, targetAge: value }))}
+          className="grid grid-cols-2 gap-3"
+        >
+          {ageGroups.map((ageGroup) => (
+            <Label
+              key={ageGroup.value}
+              htmlFor={`age-${ageGroup.value}`}
+              className={cn(
+                "flex cursor-pointer items-start justify-between rounded-lg border-2 p-4 hover:border-primary/50 transition-colors",
+                storyData.targetAge === ageGroup.value && "border-primary bg-primary/5",
+              )}
+            >
+              <div className="flex items-start gap-3 flex-1">
+                <RadioGroupItem value={ageGroup.value} id={`age-${ageGroup.value}`} className="mt-1" />
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 mb-1">
+                    <ageGroup.icon className="h-4 w-4" />
+                    <span className="font-medium text-sm">{ageGroup.label}</span>
+                    <span className={cn("text-xs px-2 py-0.5 rounded-full", ageGroup.color)}>
+                      Optimized
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">{ageGroup.description}</p>
+                </div>
+              </div>
+            </Label>
+          ))}
+        </RadioGroup>
+      </div>
+
       {/* Characters Section */}
       <div className="space-y-4">
         <div className="flex items-center justify-between">
-          <Label>Story Characters</Label>
-          <Button type="button" size="sm" variant="outline" onClick={handleAddCharacter} disabled={storyData.characters.length >= 5}>
+          <div>
+            <Label className="text-base font-medium">Story Characters</Label>
+            <p className="text-sm text-muted-foreground">
+              {getCharacterGuidance(storyData.targetAge)}
+            </p>
+          </div>
+          <Button 
+            type="button" 
+            size="sm" 
+            variant="outline" 
+            onClick={handleAddCharacter} 
+            disabled={storyData.characters.length >= getMaxCharacters(storyData.targetAge)}
+          >
             <Plus className="mr-1 h-3 w-3 md:mr-2 md:h-4 md:w-4" /> 
             <span className="text-xs md:text-sm">Add Character</span>
           </Button>
         </div>
-        <p className="text-sm text-muted-foreground">Add up to 5 characters for your story.</p>
+        
         <div className="space-y-3 max-h-[200px] overflow-y-auto pr-1">
           {storyData.characters.map((char, index) => (
             <Card key={index} className="relative pt-4 bg-white">
@@ -342,7 +451,7 @@ function Step2CharactersLanguage({ storyData, setStoryData }: StepProps) {
                   <Label htmlFor={`character-name-${index}`} className="text-slate-800 text-xs">Name</Label>
                   <Input
                     id={`character-name-${index}`}
-                    placeholder={`Character ${index + 1} Name`}
+                    placeholder={getCharacterNamePlaceholder(index, storyData.targetAge)}
                     value={char.name}
                     onChange={(e) => handleCharacterChange(index, 'name', e.target.value)}
                     className="h-8 text-sm"
@@ -352,7 +461,7 @@ function Step2CharactersLanguage({ storyData, setStoryData }: StepProps) {
                   <Label htmlFor={`character-desc-${index}`} className="text-slate-800 text-xs">Description</Label>
                   <Textarea
                     id={`character-desc-${index}`}
-                    placeholder="Brief description (e.g., brave knight, curious cat)"
+                    placeholder={getCharacterDescPlaceholder(storyData.targetAge)}
                     value={char.description}
                     onChange={(e) => handleCharacterChange(index, 'description', e.target.value)}
                     className="min-h-[40px] text-sm resize-none"
@@ -362,7 +471,12 @@ function Step2CharactersLanguage({ storyData, setStoryData }: StepProps) {
             </Card>
           ))}
           {storyData.characters.length === 0 && (
-            <p className="text-sm text-muted-foreground text-center py-4">No characters added yet. Click "Add Character" to get started.</p>
+            <div className="text-center py-6 border-2 border-dashed border-muted rounded-lg">
+              <p className="text-sm text-muted-foreground">No characters added yet.</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Click "Add Character" to create {getCharacterSuggestion(storyData.targetAge)}
+              </p>
+            </div>
           )}
         </div>
       </div>
@@ -371,7 +485,7 @@ function Step2CharactersLanguage({ storyData, setStoryData }: StepProps) {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Language Selection */}
         <div className="space-y-2">
-          <Label htmlFor="language-select" className="text-sm">Story Language</Label>
+          <Label htmlFor="language-select" className="text-sm font-medium">Story Language</Label>
           <p className="text-xs text-muted-foreground">Choose the language for your story narration.</p>
           <Select
             value={storyData.language}
@@ -390,7 +504,7 @@ function Step2CharactersLanguage({ storyData, setStoryData }: StepProps) {
 
         {/* Duration Selection */}
         <div className="space-y-2">
-          <Label className="text-sm">Story Duration</Label>
+          <Label className="text-sm font-medium">Story Duration</Label>
           <p className="text-xs text-muted-foreground">Choose how long your story should be.</p>
           <RadioGroup
             value={storyData.duration}
@@ -404,14 +518,14 @@ function Step2CharactersLanguage({ storyData, setStoryData }: StepProps) {
                 className={cn(
                   "flex cursor-pointer items-center justify-between rounded-md border border-muted p-3 hover:border-primary/50",
                   storyData.duration === option.value && "border-primary bg-primary/5",
-                  option.tier === "premium" && "opacity-60" // Style premium options differently
+                  option.tier === "premium" && "opacity-75"
                 )}
               >
                 <div className="flex items-center space-x-3">
                   <RadioGroupItem 
                     value={option.value} 
                     id={`duration-${option.value}`}
-                    disabled={option.tier === "premium"} // Disable premium for now
+                    disabled={option.tier === "premium"}
                   />
                   <div>
                     <div className="flex items-center gap-2">
@@ -433,24 +547,37 @@ function Step2CharactersLanguage({ storyData, setStoryData }: StepProps) {
           </RadioGroup>
         </div>
       </div>
+
+      {/* Optional Custom Elements */}
+      <div className="space-y-2">
+        <Label htmlFor="custom-prompt" className="text-sm font-medium">Special Requests (Optional)</Label>
+        <p className="text-xs text-muted-foreground">
+          Add any special elements you'd like in the story (e.g., "include a pet dog", "set in a garden", "teach about recycling").
+        </p>
+        <Textarea
+          id="custom-prompt"
+          placeholder="Any special elements or themes you'd like included..."
+          value={storyData.customPrompt || ""}
+          onChange={(e) => setStoryData(prev => ({ ...prev, customPrompt: e.target.value }))}
+          className="min-h-[60px] text-sm resize-none"
+        />
+      </div>
     </div>
   );
 }
 
-// Step 3: Voice Selection (with subscription restrictions)
+// Step 3: Voice Selection
 function Step3VoiceSelection({ storyData, setStoryData }: StepProps) {
   const [voices, setVoices] = useState<Voice[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [userTier, setUserTier] = useState<string>('free'); // TODO: Get from actual user profile
+  const [userTier, setUserTier] = useState<string>('free');
 
-  // Fetch voices when component mounts or language changes
   useEffect(() => {
     const fetchVoices = async () => {
       try {
         setLoading(true);
         setError(null);
-        console.log('Fetching voices for language:', storyData.language);
         
         const response = await fetch('/api/voices');
         if (!response.ok) {
@@ -458,16 +585,12 @@ function Step3VoiceSelection({ storyData, setStoryData }: StepProps) {
         }
         
         const data = await response.json();
-        console.log('Received voices data:', data);
         
-        // Filter voices by selected language
         let filteredVoices = data.voices.filter((voice: Voice) => 
           voice.language === storyData.language
         );
 
-        // For free users, only show default/fallback voices
         if (userTier === 'free') {
-          // Add default voices for free users
           const defaultVoices = [
             {
               value: `default-${storyData.language}-male`,
@@ -499,7 +622,6 @@ function Step3VoiceSelection({ storyData, setStoryData }: StepProps) {
         
         setVoices(filteredVoices);
         
-        // Auto-select first voice if none selected
         if (!storyData.voice && filteredVoices.length > 0) {
           setStoryData(prev => ({ ...prev, voice: filteredVoices[0].value }));
         }
@@ -518,11 +640,8 @@ function Step3VoiceSelection({ storyData, setStoryData }: StepProps) {
   const handlePlayVoice = (voiceValue: string) => {
     const voice = voices.find(v => v.value === voiceValue);
     if (voice?.preview_url) {
-      console.log('Playing voice preview:', voice.preview_url);
       const audio = new Audio(voice.preview_url);
       audio.play().catch(console.error);
-    } else {
-      console.log('No preview available for voice:', voiceValue);
     }
   };
 
@@ -596,11 +715,6 @@ function Step3VoiceSelection({ storyData, setStoryData }: StepProps) {
                           Free
                         </span>
                       )}
-                      {voice.category === 'professional' && userTier === 'premium' && (
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">
-                          Premium
-                        </span>
-                      )}
                     </div>
                     <p className="text-xs text-muted-foreground leading-relaxed">
                       {voice.description}
@@ -632,15 +746,10 @@ function Step3VoiceSelection({ storyData, setStoryData }: StepProps) {
   );
 }
 
-// Step 4: Preview & Create (was Step 3)
+// Step 4: Preview & Create
 function Step4PreviewCreate({ storyData }: StepProps) {
-  // Use the preserved preview URLs from storyData
   const imagePreviews = storyData.imagePreviewUrls;
   
-  // Debug logging
-  console.log('Step 4 - coverImages:', storyData.coverImages.length);
-  console.log('Step 4 - imagePreviewUrls:', storyData.imagePreviewUrls.length);
-
   return (
     <div className="space-y-4 md:space-y-6">
       <h3 className="text-base md:text-lg font-semibold text-gray-800">Story Preview</h3>
@@ -664,7 +773,6 @@ function Step4PreviewCreate({ storyData }: StepProps) {
             )}
           </div>
 
-          {/* Divider */}
           <hr className="border-gray-200" />
 
           {/* Other Details Grid */}
@@ -672,6 +780,10 @@ function Step4PreviewCreate({ storyData }: StepProps) {
             <div className="space-y-1">
               <p className="font-medium text-gray-600">Theme:</p>
               <p className="capitalize text-gray-800">{storyData.theme || <span className="text-muted-foreground italic">Not selected</span>}</p>
+            </div>
+            <div className="space-y-1">
+              <p className="font-medium text-gray-600">Target Age:</p>
+              <p className="text-gray-800">{getAgeGroupLabel(storyData.targetAge) || <span className="text-muted-foreground italic">Not selected</span>}</p>
             </div>
             <div className="space-y-1">
               <p className="font-medium text-gray-600">Language:</p>
@@ -687,7 +799,17 @@ function Step4PreviewCreate({ storyData }: StepProps) {
             </div>
           </div>
 
-          {/* Divider */}
+          {/* Custom Prompt */}
+          {storyData.customPrompt && (
+            <>
+              <hr className="border-gray-200" />
+              <div>
+                <h4 className="text-sm md:text-base font-medium text-gray-700 mb-2">Special Requests</h4>
+                <p className="text-xs md:text-sm text-gray-600 italic">"{storyData.customPrompt}"</p>
+              </div>
+            </>
+          )}
+
           <hr className="border-gray-200" />
 
           {/* Characters Section */}
@@ -712,13 +834,120 @@ function Step4PreviewCreate({ storyData }: StepProps) {
   );
 }
 
-// --- Main Wizard Component ---
+// --- Helper Functions ---
 
-interface StoryCreationWizardProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onComplete?: (storyData: StoryData) => void;
+function getCharacterGuidance(targetAge: string): string {
+  const guidance = {
+    "2-4": "Add 1-2 simple characters (like family members or friendly animals).",
+    "3-5": "Create 1-2 relatable characters with clear, simple personalities.",
+    "5-7": "Add 2-3 diverse characters with distinct traits and roles.",
+    "6-10": "Create 2-4 well-developed characters with unique motivations.",
+    "mixed": "Add 2-3 characters that appeal to different age levels."
+  };
+  return guidance[targetAge as keyof typeof guidance] || guidance.mixed;
 }
+
+function getMaxCharacters(targetAge: string): number {
+  const maxChars = {
+    "2-4": 2,
+    "3-5": 2,
+    "5-7": 3,
+    "6-10": 4,
+    "mixed": 3
+  };
+  return maxChars[targetAge as keyof typeof maxChars] || 3;
+}
+
+function getCharacterNamePlaceholder(index: number, targetAge: string): string {
+  const suggestions = {
+    "2-4": ["Teddy", "Mama", "Puppy"][index] || "Friend",
+    "3-5": ["Luna", "Max", "Rosie"][index] || "Character",
+    "5-7": ["Alex", "Maya", "Sam"][index] || "Character",
+    "6-10": ["Elena", "Zara", "Noah"][index] || "Character",
+    "mixed": ["Jamie", "River", "Sage"][index] || "Character"
+  };
+  return suggestions[targetAge as keyof typeof suggestions] || "Character Name";
+}
+
+function getCharacterDescPlaceholder(targetAge: string): string {
+  const placeholders = {
+    "2-4": "A cuddly bear who likes hugs",
+    "3-5": "A kind friend who loves to share",
+    "5-7": "A brave explorer who helps others",
+    "6-10": "A clever inventor who solves problems",
+    "mixed": "A caring friend with special talents"
+  };
+  return placeholders[targetAge as keyof typeof placeholders] || "Describe this character...";
+}
+
+function getCharacterSuggestion(targetAge: string): string {
+  const suggestions = {
+    "2-4": "1-2 simple, familiar characters.",
+    "3-5": "1-2 friendly characters.",
+    "5-7": "2-3 diverse characters.",
+    "6-10": "2-4 interesting characters.",
+    "mixed": "2-3 engaging characters."
+  };
+  return suggestions[targetAge as keyof typeof suggestions] || "some characters.";
+}
+
+function getAgeSpecificDuration(duration: string, targetAge: string): string {
+  const descriptions = {
+    "2-4": {
+      "short": "Very brief story perfect for toddler attention spans",
+      "medium": "Gentle story with simple repetition",
+      "long": "Extended but simple story with familiar themes"
+    },
+    "3-5": {
+      "short": "Quick story with clear beginning and end",
+      "medium": "Engaging story with simple plot",
+      "long": "Detailed story with character development"
+    },
+    "5-7": {
+      "short": "Adventure-packed short story",
+      "medium": "Well-developed story with problem-solving",
+      "long": "Rich narrative with multiple scenes"
+    },
+    "6-10": {
+      "short": "Sophisticated short tale",
+      "medium": "Complex story with character growth",
+      "long": "Epic story with detailed world-building"
+    },
+    "mixed": {
+      "short": "Multi-layered quick story",
+      "medium": "Engaging story for all ages",
+      "long": "Rich, detailed family story"
+    }
+  };
+
+  return descriptions[targetAge as keyof typeof descriptions]?.[duration] || 
+         descriptions.mixed[duration as keyof typeof descriptions.mixed];
+}
+
+function getAgeSpecificTime(duration: string, targetAge: string): string {
+  const times = {
+    "2-4": { "short": "30s-1m", "medium": "1-2m", "long": "2-3m" },
+    "3-5": { "short": "1-2m", "medium": "2-3m", "long": "3-4m" },
+    "5-7": { "short": "1-2m", "medium": "3-4m", "long": "5-6m" },
+    "6-10": { "short": "2-3m", "medium": "4-5m", "long": "6-8m" },
+    "mixed": { "short": "1-2m", "medium": "3-4m", "long": "5-7m" }
+  };
+
+  return times[targetAge as keyof typeof times]?.[duration] || times.mixed[duration as keyof typeof times.mixed];
+}
+
+function getAgeGroupLabel(targetAge: string): string {
+  const labels = {
+    "2-4": "Toddlers (2-4 years)",
+    "3-5": "Preschoolers (3-5 years)", 
+    "5-7": "Early Elementary (5-7 years)",
+    "6-10": "Elementary (6-10 years)",
+    "mixed": "Mixed Ages (3-10 years)"
+  };
+  return labels[targetAge as keyof typeof labels] || "Mixed Ages";
+}
+
+// --- Main Wizard Component ---
 
 export function StoryCreationWizardModal({ open, onOpenChange, onComplete }: StoryCreationWizardProps) {
   const [step, setStep] = useState(1);
@@ -731,11 +960,13 @@ export function StoryCreationWizardModal({ open, onOpenChange, onComplete }: Sto
     language: "en",
     voice: "",
     duration: "short",
+    targetAge: "mixed",
+    customPrompt: ""
   });
 
   const router = useRouter();
   const { toast } = useToast();
-  const totalSteps = 4; // Updated to 4 steps
+  const totalSteps = 4;
 
   const updateStoryData = useCallback((key: keyof StoryData | string, value: any) => {
     setStoryData((prev) => ({ ...prev, [key]: value }));
@@ -745,7 +976,6 @@ export function StoryCreationWizardModal({ open, onOpenChange, onComplete }: Sto
     if (step < totalSteps) {
       setStep(step + 1);
     } else {
-      // Final step - create the story
       await handleStoryComplete();
     }
   };
@@ -756,16 +986,17 @@ export function StoryCreationWizardModal({ open, onOpenChange, onComplete }: Sto
     try {
       console.log("Creating story with data:", storyData);
 
-      // Convert File objects to form data for API
       const formData = new FormData();
       
-      // Add story data
+      // Add story data including new fields
       formData.append('storyData', JSON.stringify({
         theme: storyData.theme,
         characters: storyData.characters,
         language: storyData.language,
         voice: storyData.voice,
-        duration: storyData.duration
+        duration: storyData.duration,
+        targetAge: storyData.targetAge,
+        customPrompt: storyData.customPrompt
       }));
 
       // Add image files
@@ -785,22 +1016,15 @@ export function StoryCreationWizardModal({ open, onOpenChange, onComplete }: Sto
 
       const { storyId } = await response.json();
       
-      // Close modal first
       onOpenChange(false);
       
-      // Show success message
       toast({
         title: "Story Creation Started!",
         description: "Your story is being generated. You'll be redirected to the progress page.",
       });
 
-      // Reset form state
       resetForm();
-
-      // Redirect to processing page
       router.push(`/story/creating/${storyId}`);
-
-      // Call onComplete if provided (optional)
       onComplete?.(storyData);
 
     } catch (error: any) {
@@ -826,6 +1050,8 @@ export function StoryCreationWizardModal({ open, onOpenChange, onComplete }: Sto
       language: "en",
       voice: "",
       duration: "short",
+      targetAge: "mixed",
+      customPrompt: ""
     });
     setLoading(false);
   };
@@ -836,7 +1062,6 @@ export function StoryCreationWizardModal({ open, onOpenChange, onComplete }: Sto
     }
   };
 
-  // Reset step when dialog is closed
   useEffect(() => {
     if (!open) {
       setStep(1);
@@ -846,8 +1071,8 @@ export function StoryCreationWizardModal({ open, onOpenChange, onComplete }: Sto
 
   const stepTitles = [
     "Upload Image & Theme",
-    "Characters, Language & Duration", 
-    "Voice Selection",
+    "Characters, Age & Settings",
+    "Voice Selection", 
     "Preview & Create",
   ];
 
@@ -856,7 +1081,7 @@ export function StoryCreationWizardModal({ open, onOpenChange, onComplete }: Sto
       case 1:
         return <Step1UploadTheme storyData={storyData} setStoryData={setStoryData} updateStoryData={updateStoryData} />;
       case 2:
-        return <Step2CharactersLanguage storyData={storyData} setStoryData={setStoryData} updateStoryData={updateStoryData} />;
+        return <Step2CharactersAge storyData={storyData} setStoryData={setStoryData} updateStoryData={updateStoryData} />;
       case 3:
         return <Step3VoiceSelection storyData={storyData} setStoryData={setStoryData} updateStoryData={updateStoryData} />;
       case 4:
