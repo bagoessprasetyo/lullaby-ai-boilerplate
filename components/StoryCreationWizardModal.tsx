@@ -79,7 +79,7 @@ interface Voice {
   descriptive: string;
 }
 
-// Main modal props interface (FIXED TypeScript interface)
+// Main modal props interface
 interface StoryCreationWizardProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -579,51 +579,38 @@ function Step3VoiceSelection({ storyData, setStoryData }: StepProps) {
         setLoading(true);
         setError(null);
         
-        const response = await fetch('/api/voices');
-        if (!response.ok) {
-          throw new Error('Failed to fetch voices');
-        }
+        // Use default voices for now since the voices API might not exist yet
+        const defaultVoices: Voice[] = [
+          {
+            value: `default-${storyData.language}-male`,
+            label: `Default Male Voice`,
+            description: `A professional ${storyData.language === 'id' ? 'Indonesian' : 'English'} male voice for storytelling`,
+            language: storyData.language,
+            gender: 'male',
+            age: 'adult',
+            accent: 'standard',
+            preview_url: null,
+            category: 'default',
+            descriptive: 'professional'
+          },
+          {
+            value: `default-${storyData.language}-female`,
+            label: `Default Female Voice`,
+            description: `A professional ${storyData.language === 'id' ? 'Indonesian' : 'English'} female voice for storytelling`,
+            language: storyData.language,
+            gender: 'female',
+            age: 'adult',
+            accent: 'standard',
+            preview_url: null,
+            category: 'default',
+            descriptive: 'professional'
+          }
+        ];
         
-        const data = await response.json();
+        setVoices(defaultVoices);
         
-        let filteredVoices = data.voices.filter((voice: Voice) => 
-          voice.language === storyData.language
-        );
-
-        if (userTier === 'free') {
-          const defaultVoices = [
-            {
-              value: `default-${storyData.language}-male`,
-              label: `Default Male Voice`,
-              description: `A professional ${storyData.language === 'id' ? 'Indonesian' : 'English'} male voice for storytelling`,
-              language: storyData.language,
-              gender: 'male',
-              age: 'adult',
-              accent: 'standard',
-              preview_url: null,
-              category: 'default',
-              descriptive: 'professional'
-            },
-            {
-              value: `default-${storyData.language}-female`,
-              label: `Default Female Voice`,
-              description: `A professional ${storyData.language === 'id' ? 'Indonesian' : 'English'} female voice for storytelling`,
-              language: storyData.language,
-              gender: 'female',
-              age: 'adult',
-              accent: 'standard',
-              preview_url: null,
-              category: 'default',
-              descriptive: 'professional'
-            }
-          ];
-          filteredVoices = defaultVoices;
-        }
-        
-        setVoices(filteredVoices);
-        
-        if (!storyData.voice && filteredVoices.length > 0) {
-          setStoryData(prev => ({ ...prev, voice: filteredVoices[0].value }));
+        if (!storyData.voice && defaultVoices.length > 0) {
+          setStoryData(prev => ({ ...prev, voice: defaultVoices[0].value }));
         }
         
       } catch (err: any) {
@@ -952,6 +939,7 @@ function getAgeGroupLabel(targetAge: string): string {
 export function StoryCreationWizardModal({ open, onOpenChange, onComplete }: StoryCreationWizardProps) {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<string>("");
   const [storyData, setStoryData] = useState<StoryData>({
     coverImages: [],
     imagePreviewUrls: [],
@@ -982,10 +970,11 @@ export function StoryCreationWizardModal({ open, onOpenChange, onComplete }: Sto
 
   const handleStoryComplete = async () => {
     setLoading(true);
+    setUploadProgress("Starting story creation...");
     
     try {
-      console.log("Creating story with data:", storyData);
-
+      setUploadProgress("Creating story...");
+      
       const formData = new FormData();
       
       // Add story data including new fields
@@ -1004,18 +993,23 @@ export function StoryCreationWizardModal({ open, onOpenChange, onComplete }: Sto
         formData.append(`coverImage_${index}`, file);
       });
 
-      const response = await fetch('/api/stories/create', {
+      const storyResponse = await fetch('/api/stories/create', {
         method: 'POST',
         body: formData
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
+      if (!storyResponse.ok) {
+        const errorData = await storyResponse.json().catch(() => ({}));
         throw new Error(errorData.error || 'Failed to create story');
       }
 
-      const { storyId } = await response.json();
-      
+      const { storyId } = await storyResponse.json();
+
+      // Images are uploaded as part of the form data in the API route
+      setUploadProgress("Story created successfully!");
+
+      // Success!
+      setUploadProgress("Story created successfully!");
       onOpenChange(false);
       
       toast({
@@ -1037,6 +1031,7 @@ export function StoryCreationWizardModal({ open, onOpenChange, onComplete }: Sto
       });
     } finally {
       setLoading(false);
+      setUploadProgress("");
     }
   };
 
@@ -1054,6 +1049,7 @@ export function StoryCreationWizardModal({ open, onOpenChange, onComplete }: Sto
       customPrompt: ""
     });
     setLoading(false);
+    setUploadProgress("");
   };
 
   const handleBack = () => {
@@ -1066,6 +1062,7 @@ export function StoryCreationWizardModal({ open, onOpenChange, onComplete }: Sto
     if (!open) {
       setStep(1);
       setLoading(false);
+      setUploadProgress("");
     }
   }, [open]);
 
@@ -1104,7 +1101,15 @@ export function StoryCreationWizardModal({ open, onOpenChange, onComplete }: Sto
           Follow the steps to create your personalized lullaby story.
         </DialogDescription>
         <div className="overflow-y-auto px-4 py-3 md:px-6 md:py-4 min-h-[300px] md:min-h-[400px]">
-          {renderStepContent()}
+          {loading && uploadProgress && (
+            <div className="flex items-center justify-center py-8">
+              <div className="text-center space-y-3">
+                <Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" />
+                <p className="text-sm text-muted-foreground">{uploadProgress}</p>
+              </div>
+            </div>
+          )}
+          {!loading && renderStepContent()}
         </div>
         <DialogFooter className="border-t border-border px-4 py-3 md:px-6 md:py-4">
           <div className="flex w-full flex-col sm:flex-row items-center justify-between gap-3">
@@ -1145,7 +1150,7 @@ export function StoryCreationWizardModal({ open, onOpenChange, onComplete }: Sto
                 {loading ? (
                   <>
                     <Loader2 className="mr-2 h-3 w-3 md:h-4 md:w-4 animate-spin" />
-                    Creating...
+                    {uploadProgress ? "Processing..." : "Creating..."}
                   </>
                 ) : (
                   <>

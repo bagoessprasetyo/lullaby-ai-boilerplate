@@ -67,6 +67,12 @@ const lullabyNavItems = [
     icon: ShoppingCartIcon,
     isActive: false,
   },
+  {
+    title: "Waitlist",
+    url: "/waitlist", // Updated route to the new page
+    icon: ExternalLink,
+    isActive: false,
+  },
 ]
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {

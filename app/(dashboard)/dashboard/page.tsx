@@ -26,7 +26,7 @@ export default function Page({ handlePlayStory }: DashboardPageProps) {
   const { user } = useUser();
   const { data: mostPlayedStories, isLoading: isLoadingStories } = useMostPlayedStories(user?.id);
   const [searchTerm, setSearchTerm] = React.useState(""); // State for search term
-  // console.log('usrrrr : '+ user?.publicMetadata);
+  console.log('usrrrr : '+ mostPlayedStories);
   // const { theme } = useTheme();
 
   // --- Define Bento Grid Items --- 
