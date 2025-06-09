@@ -2,7 +2,8 @@
 import { auth } from '@clerk/nextjs/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { createServiceRoleClient } from '@/lib/supabase/admin';
-import { generateStoryAsync } from '@/lib/services/story-generation';
+import { generateStoryAsync } from '@/lib/services/story-generation-deepseek';
+// import { generateStoryAsync } from '@/lib/services/story-generation';
 
 export async function POST(req: NextRequest) {
   try {
@@ -161,7 +162,7 @@ export async function POST(req: NextRequest) {
             .insert({
               story_id: story.id,
               user_id: profile.id,
-              storage_path: filePath,
+              storage_path: 'https://lqqimtwhbuunjyleaeus.supabase.co/storage/v1/object/public/stories/'+filePath,
               sequence_index: i
             });
 

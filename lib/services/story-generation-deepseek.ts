@@ -1,4 +1,4 @@
-// lib/services/story-generation.ts
+// lib/services/story-generation-deepseek.ts (FIXED VERSION)
 import { createServiceRoleClient } from '@/lib/supabase/admin';
 import OpenAI from 'openai';
 
@@ -21,33 +21,50 @@ interface ImageAnalysis {
   objects?: string[];
 }
 
-// Initialize OpenAI client
+// Configure DeepSeek client
+const deepseek = new OpenAI({
+  apiKey: process.env.DEEPSEEK_API_KEY,
+  baseURL: 'https://api.deepseek.com',
+});
+
+// Fallback to OpenAI if DeepSeek is not available
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+// Configuration to choose which AI service to use
+const AI_CONFIG = {
+  preferredService: process.env.AI_SERVICE || 'deepseek',
+  deepseekModel: 'deepseek-chat',
+  openaiModel: 'gpt-4o-mini',
+  visionModel: 'gpt-4o',
+};
+
+console.log('[AI Config] Using service:', AI_CONFIG.preferredService);
+
 export async function generateStoryAsync(storyId: string, storyData: StoryData) {
   const supabase = createServiceRoleClient();
   
-  console.log('[Story Generation] Starting generation for story:', storyId, 'with data:', storyData);
+  console.log('[Story Generation] Starting generation for story:', storyId);
+  console.log('[Story Generation] Using AI service:', AI_CONFIG.preferredService);
   
   try {
     // Step 1: Update status to generating
     await updateStoryStatus(storyId, 'generating', 10, 'analyzing-images');
     
-    // Step 2: Analyze uploaded images if any
+    // Step 2: Analyze uploaded images if any (always use OpenAI for vision)
     let imageAnalyses: ImageAnalysis[] = [];
     if (storyData.uploadedImages && storyData.uploadedImages.length > 0) {
-      console.log('[Story Generation] Analyzing uploaded images...');
+      console.log('[Story Generation] Analyzing uploaded images with OpenAI Vision...');
       imageAnalyses = await analyzeUploadedImages(storyData.uploadedImages);
       await updateStoryStatus(storyId, 'generating', 25, 'generating-title');
     }
     
-    // Step 3: Generate story title
+    // Step 3: Generate story title using preferred AI service
     const storyTitle = await generateStoryTitle(storyData, imageAnalyses);
     await updateStoryStatus(storyId, 'generating', 35, 'story-generation');
     
-    // Step 4: Generate story text using OpenAI
+    // Step 4: Generate story text using preferred AI service
     const storyText = await generateStoryText(storyData, imageAnalyses);
     await updateStoryStatus(storyId, 'generating', 60, 'audio-generation');
 
@@ -60,10 +77,18 @@ export async function generateStoryAsync(storyId: string, storyData: StoryData) 
       await updateImageRecords(storyId, storyData.uploadedImages);
     }
 
-    // Step 7: Save completed story
+    // Step 7: Save completed story - FIXED VERSION
     await updateStoryStatus(storyId, 'generating', 95, 'saving');
     
-    const { error: updateError } = await supabase
+    // FIXED: Use the same robust pattern as updateStoryStatus
+    console.log('[Story Generation] Saving final story content...');
+    console.log('[Story Generation] Content to save:', {
+      titleLength: storyTitle?.length || 0,
+      textLength: storyText?.length || 0,
+      audioUrl: audioUrl?.substring(0, 50) + '...'
+    });
+
+    const { data: finalUpdate, error: updateError } = await supabase
       .from('stories')
       .update({
         title: storyTitle,
@@ -71,40 +96,78 @@ export async function generateStoryAsync(storyId: string, storyData: StoryData) 
         audio_url: audioUrl,
         generation_status: 'completed',
         generation_progress: 100,
-        current_step: 'completed'
+        current_step: 'completed',
+        updated_at: new Date().toISOString()
       })
-      .eq('id', storyId);
+      .eq('id', storyId)
+      .select('id, title, generation_status, generation_progress, current_step'); // FIXED: Force return
 
     if (updateError) {
+      console.error('[Story Generation] Final update error:', updateError);
       throw new Error(`Failed to save story: ${updateError.message}`);
     }
 
-    console.log('[Story Generation] Completed story generation for:', storyId);
+    if (!finalUpdate || finalUpdate.length === 0) {
+      console.error('[Story Generation] No rows updated in final save - story might not exist:', storyId);
+      throw new Error(`No story found with ID: ${storyId} for final update`);
+    }
+
+    console.log('[Story Generation] ✅ Final story save successful:', finalUpdate[0]);
+    console.log('[Story Generation] 🎉 Story generation fully completed for:', storyId);
 
   } catch (error: any) {
     console.error('[Story Generation] Error generating story:', error);
-    
-    // Log the full error for debugging
     console.error('[Story Generation] Full error details:', {
       message: error.message,
       stack: error.stack,
       storyId,
-      storyData
+      timestamp: new Date().toISOString()
     });
     
-    await supabase
-      .from('stories')
-      .update({
-        generation_status: 'error',
-        error_message: error.message || 'Unknown error occurred during generation',
-        current_step: 'error'
-      })
-      .eq('id', storyId);
+    try {
+      await supabase
+        .from('stories')
+        .update({
+          generation_status: 'error',
+          error_message: error.message || 'Unknown error occurred during generation',
+          current_step: 'error',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', storyId);
+      
+      console.log('[Story Generation] Error status saved to database');
+    } catch (errorUpdateFailed) {
+      console.error('[Story Generation] Failed to save error status:', errorUpdateFailed);
+    }
+  }
+}
+
+async function getAIClient(): Promise<{ client: OpenAI; model: string; service: string }> {
+  if (AI_CONFIG.preferredService === 'deepseek' && process.env.DEEPSEEK_API_KEY) {
+    return {
+      client: deepseek,
+      model: AI_CONFIG.deepseekModel,
+      service: 'deepseek'
+    };
+  } else if (process.env.OPENAI_API_KEY) {
+    console.log('[AI Client] Falling back to OpenAI');
+    return {
+      client: openai,
+      model: AI_CONFIG.openaiModel,
+      service: 'openai'
+    };
+  } else {
+    throw new Error('No AI API key configured (DEEPSEEK_API_KEY or OPENAI_API_KEY)');
   }
 }
 
 async function analyzeUploadedImages(imageUrls: string[]): Promise<ImageAnalysis[]> {
   console.log('[Story Generation] Analyzing', imageUrls.length, 'images with OpenAI Vision...');
+  
+  if (!process.env.OPENAI_API_KEY) {
+    console.log('[Story Generation] No OpenAI API key for image analysis, skipping...');
+    return [];
+  }
   
   const analyses: ImageAnalysis[] = [];
   
@@ -113,7 +176,7 @@ async function analyzeUploadedImages(imageUrls: string[]): Promise<ImageAnalysis
       console.log(`[Story Generation] Analyzing image ${i + 1}/${imageUrls.length}:`, imageUrls[i]);
       
       const response = await openai.chat.completions.create({
-        model: "gpt-4-vision-preview",
+        model: AI_CONFIG.visionModel,
         messages: [
           {
             role: "system",
@@ -152,11 +215,9 @@ Return your analysis in this JSON format:
       const analysisText = response.choices[0]?.message?.content;
       if (analysisText) {
         try {
-          // Try to parse as JSON first
           const parsedAnalysis = JSON.parse(analysisText);
           analyses.push(parsedAnalysis);
         } catch (parseError) {
-          // If JSON parsing fails, create analysis from text
           analyses.push({
             description: analysisText,
             characters: [],
@@ -171,7 +232,6 @@ Return your analysis in this JSON format:
       
     } catch (error: any) {
       console.error(`[Story Generation] Error analyzing image ${i + 1}:`, error);
-      // Continue with other images even if one fails
       analyses.push({
         description: "Unable to analyze this image",
         characters: [],
@@ -190,6 +250,9 @@ async function generateStoryTitle(storyData: StoryData, imageAnalyses: ImageAnal
   console.log('[Story Generation] Generating story title...');
   
   try {
+    const { client, model, service } = await getAIClient();
+    console.log(`[Story Generation] Using ${service} (${model}) for title generation`);
+    
     const { theme, characters, language, targetAge } = storyData;
     const imageContext = imageAnalyses.length > 0 
       ? `Based on uploaded images showing: ${imageAnalyses.map(a => a.description).join(', ')}`
@@ -198,8 +261,8 @@ async function generateStoryTitle(storyData: StoryData, imageAnalyses: ImageAnal
     const characterNames = characters.map(c => c.name).filter(Boolean);
     const mainCharacter = characterNames[0] || 'the main character';
     
-    const response = await openai.chat.completions.create({
-      model: "gpt-4-turbo-preview",
+    const response = await client.chat.completions.create({
+      model: model,
       messages: [
         {
           role: "system",
@@ -230,7 +293,6 @@ Generate a title that would excite children and make them want to hear the story
     const title = response.choices[0]?.message?.content?.trim();
     
     if (!title) {
-      // Fallback title generation
       const fallbackTitle = generateFallbackTitle(storyData, imageAnalyses);
       console.log('[Story Generation] Using fallback title:', fallbackTitle);
       return fallbackTitle;
@@ -245,6 +307,104 @@ Generate a title that would excite children and make them want to hear the story
   }
 }
 
+async function generateStoryText(storyData: StoryData, imageAnalyses: ImageAnalysis[]): Promise<string> {
+  console.log('[Story Generation] Generating story text...');
+  
+  try {
+    const { client, model, service } = await getAIClient();
+    console.log(`[Story Generation] Using ${service} (${model}) for story generation`);
+    
+    const prompt = buildEnhancedStoryPrompt(storyData, imageAnalyses);
+    
+    const completion = await client.chat.completions.create({
+      model: model,
+      messages: [
+        {
+          role: "system",
+          content: getSystemPrompt(storyData.language, storyData.targetAge)
+        },
+        {
+          role: "user",
+          content: prompt
+        }
+      ],
+      max_tokens: getMaxTokensForDuration(storyData.duration, storyData.targetAge),
+      temperature: 0.7,
+      top_p: 0.9,
+      frequency_penalty: 0.1,
+      presence_penalty: 0.1
+    });
+
+    const generatedStory = completion.choices[0]?.message?.content;
+    
+    if (!generatedStory) {
+      throw new Error(`No story content generated by ${service}`);
+    }
+
+    console.log(`[Story Generation] ${service} story generated successfully, length:`, generatedStory.length);
+    
+    // Validate word count
+    const wordCount = generatedStory.trim().split(/\s+/).length;
+    const minWords = getMinWordCount(storyData.duration);
+    
+    if (wordCount < minWords) {
+      console.log(`[Story Generation] Story too short (${wordCount} words, need ${minWords}), extending...`);
+      return await extendStory(generatedStory, storyData, minWords - wordCount);
+    }
+    
+    return generatedStory.trim();
+
+  } catch (error: any) {
+    console.error(`[Story Generation] AI API Error:`, error);
+    
+    console.log('[Story Generation] Falling back to template generation...');
+    return generateTemplateStory(storyData, imageAnalyses);
+  }
+}
+
+async function extendStory(originalStory: string, storyData: StoryData, additionalWords: number): Promise<string> {
+  console.log(`[Story Generation] Extending story by approximately ${additionalWords} words...`);
+  
+  try {
+    const { client, model, service } = await getAIClient();
+    console.log(`[Story Generation] Using ${service} (${model}) for story extension`);
+
+    const response = await client.chat.completions.create({
+      model: model,
+      messages: [
+        {
+          role: "system",
+          content: `You are tasked with extending a children's bedtime story. Add approximately ${additionalWords} more words while maintaining the same style, tone, and quality. The extension should flow naturally and enhance the story.`
+        },
+        {
+          role: "user",
+          content: `Please extend this story by adding more descriptive details, character development, or plot elements. The extension should flow seamlessly with the existing content.
+
+Current story:
+${originalStory}
+
+Add approximately ${additionalWords} more words while keeping the same ${storyData.language === 'id' ? 'Indonesian' : 'English'} language and ${storyData.theme} theme.`
+        }
+      ],
+      max_tokens: Math.ceil(additionalWords * 1.5),
+      temperature: 0.7
+    });
+
+    const extendedStory = response.choices[0]?.message?.content;
+    
+    if (extendedStory) {
+      console.log(`[Story Generation] Story extended successfully using ${service}`);
+      return extendedStory.trim();
+    }
+    
+  } catch (error) {
+    console.error('[Story Generation] Error extending story:', error);
+  }
+  
+  return originalStory;
+}
+
+// Helper functions (keeping all existing implementations)
 function generateFallbackTitle(storyData: StoryData, imageAnalyses: ImageAnalysis[]): string {
   const { theme, characters } = storyData;
   const mainCharacter = characters[0]?.name || 'Our Friend';
@@ -268,64 +428,10 @@ function generateFallbackTitle(storyData: StoryData, imageAnalyses: ImageAnalysi
   return titleTemplates[0];
 }
 
-async function generateStoryText(storyData: StoryData, imageAnalyses: ImageAnalysis[]): Promise<string> {
-  console.log('[Story Generation] Generating story text with OpenAI...');
-  
-  try {
-    const prompt = buildEnhancedStoryPrompt(storyData, imageAnalyses);
-    
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4-turbo-preview",
-      messages: [
-        {
-          role: "system",
-          content: getSystemPrompt(storyData.language, storyData.targetAge)
-        },
-        {
-          role: "user",
-          content: prompt
-        }
-      ],
-      max_tokens: getMaxTokensForDuration(storyData.duration, storyData.targetAge),
-      temperature: 0.7,
-      top_p: 0.9,
-      frequency_penalty: 0.1,
-      presence_penalty: 0.1
-    });
-
-    const generatedStory = completion.choices[0]?.message?.content;
-    
-    if (!generatedStory) {
-      throw new Error('No story content generated by OpenAI');
-    }
-
-    console.log('[Story Generation] OpenAI story generated successfully, length:', generatedStory.length);
-    
-    // Validate word count
-    const wordCount = generatedStory.trim().split(/\s+/).length;
-    const minWords = getMinWordCount(storyData.duration);
-    
-    if (wordCount < minWords) {
-      console.log(`[Story Generation] Story too short (${wordCount} words, need ${minWords}), extending...`);
-      return await extendStory(generatedStory, storyData, minWords - wordCount);
-    }
-    
-    return generatedStory.trim();
-
-  } catch (error: any) {
-    console.error('[Story Generation] OpenAI API Error:', error);
-    
-    // Fallback to template-based generation if OpenAI fails
-    console.log('[Story Generation] Falling back to template generation...');
-    return generateTemplateStory(storyData, imageAnalyses);
-  }
-}
-
 function buildEnhancedStoryPrompt(storyData: StoryData, imageAnalyses: ImageAnalysis[]): string {
   const { theme, characters, language, duration, customPrompt, targetAge } = storyData;
   const ageGroup = getAgeGroup(targetAge);
   
-  // Build image context
   const imageContext = imageAnalyses.length > 0 ? `
 **UPLOADED IMAGES ANALYSIS**:
 ${imageAnalyses.map((analysis, i) => `
@@ -338,7 +444,6 @@ Image ${i + 1}: ${analysis.description}
 
 **IMPORTANT**: Incorporate elements from these images into your story. The images were provided by the user and should inspire key story elements.` : '';
 
-  // Build character section
   const characterSection = characters.length > 0 
     ? `**CHARACTERS**:
 ${characters.map((char, i) => `${i + 1}. ${char.name}: ${char.description}`).join('\n')}
@@ -346,7 +451,6 @@ ${characters.map((char, i) => `${i + 1}. ${char.name}: ${char.description}`).joi
 Make ${characters[0]?.name || 'the main character'} the protagonist.`
     : '**CHARACTERS**: Create 2-3 engaging characters appropriate for the age group.';
 
-  // Word count requirements
   const wordCountGuidance = `
 **WORD COUNT REQUIREMENT**: 
 - Short story: Minimum 300 words
@@ -398,261 +502,32 @@ function getMinWordCount(duration?: string): number {
   return wordCounts[duration as keyof typeof wordCounts] || wordCounts.medium;
 }
 
-async function extendStory(originalStory: string, storyData: StoryData, additionalWords: number): Promise<string> {
-  console.log(`[Story Generation] Extending story by approximately ${additionalWords} words...`);
-  
-  try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-4-turbo-preview",
-      messages: [
-        {
-          role: "system",
-          content: `You are tasked with extending a children's bedtime story. Add approximately ${additionalWords} more words while maintaining the same style, tone, and quality. The extension should flow naturally and enhance the story.`
-        },
-        {
-          role: "user",
-          content: `Please extend this story by adding more descriptive details, character development, or plot elements. The extension should flow seamlessly with the existing content.
-
-Current story:
-${originalStory}
-
-Add approximately ${additionalWords} more words while keeping the same ${storyData.language === 'id' ? 'Indonesian' : 'English'} language and ${storyData.theme} theme.`
-        }
-      ],
-      max_tokens: Math.ceil(additionalWords * 1.5), // Token buffer
-      temperature: 0.7
-    });
-
-    const extendedStory = response.choices[0]?.message?.content;
-    
-    if (extendedStory) {
-      console.log('[Story Generation] Story extended successfully');
-      return extendedStory.trim();
-    }
-    
-  } catch (error) {
-    console.error('[Story Generation] Error extending story:', error);
-  }
-  
-  // If extension fails, return original story
-  return originalStory;
-}
-
-async function updateImageRecords(storyId: string, imageUrls: string[]) {
-  console.log('[Story Generation] Updating image records with full URLs...');
-  
-  const supabase = createServiceRoleClient();
-  
-  try {
-    // Get existing image records for this story
-    const { data: existingImages, error: fetchError } = await supabase
-      .from('images')
-      .select('id, sequence_index')
-      .eq('story_id', storyId)
-      .order('sequence_index', { ascending: true });
-
-    if (fetchError) {
-      console.error('[Story Generation] Error fetching existing images:', fetchError);
-      return;
-    }
-
-    // Update each image record with the full URL
-    for (let i = 0; i < imageUrls.length && i < (existingImages?.length || 0); i++) {
-      const imageRecord = existingImages?.[i];
-      if (imageRecord) {
-        const { error: updateError } = await supabase
-          .from('images')
-          .update({
-            full_url: imageUrls[i],
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', imageRecord.id);
-
-        if (updateError) {
-          console.error(`[Story Generation] Error updating image ${i + 1}:`, updateError);
-        } else {
-          console.log(`[Story Generation] Updated image ${i + 1} with full URL`);
-        }
-      }
-    }
-    
-  } catch (error) {
-    console.error('[Story Generation] Error updating image records:', error);
-  }
-}
-
-// Import audio generation function
-async function generateAudio(text: string, voice: string): Promise<string> {
-  console.log('[Story Generation] Generating audio...');
-  
-  // Import the TTS service
-  const { generateAudio: generateTTS } = await import('./tts-service');
-  return await generateTTS(text, voice);
-}
-
-async function updateStoryStatus(
-  storyId: string, 
-  status: string, 
-  progress: number, 
-  step: string
-) {
-  const supabase = createServiceRoleClient();
-  
-  console.log(`[Story Generation] Updating status: ${status} (${progress}%) - ${step}`);
-  
-  const { error } = await supabase
-    .from('stories')
-    .update({
-      generation_status: status,
-      generation_progress: progress,
-      current_step: step,
-      updated_at: new Date().toISOString()
-    })
-    .eq('id', storyId);
-
-  if (error) {
-    console.error('[Story Generation] Error updating status:', error);
-    throw error;
-  }
-}
-
-// Helper functions (keeping existing implementations)
 function getSystemPrompt(language: string, targetAge?: string): string {
   const ageGroup = getAgeGroup(targetAge);
   
   const prompts = {
     en: {
-      'toddler': `You are a master storyteller specializing in very simple, repetitive bedtime stories for toddlers (ages 2-4). Your stories should be:
+      'toddler': `You are a master storyteller specializing in very simple, repetitive bedtime stories for toddlers (ages 2-4). Your stories should be extremely simple with repetitive phrases, focus on basic concepts, use very short sentences, and end with sleeping/resting themes. Write at least 300 words with very short paragraphs and natural pauses.`,
 
-- Extremely simple with repetitive phrases and predictable patterns
-- Focus on basic concepts: colors, shapes, animals, family
-- Very short sentences with simple vocabulary
-- Repetitive, soothing rhythm perfect for very young children
-- No complex plot - simple cause and effect
-- Familiar, safe environments (home, park, farm)
-- Include sounds and actions toddlers can imitate
-- End with sleeping/resting themes
-- Maximum 2-3 characters to avoid confusion
+      'preschool': `You are a master storyteller specializing in engaging yet calming bedtime stories for preschoolers (ages 3-5). Your stories should be age-appropriate with simple vocabulary, educational with basic lessons about sharing and kindness, include familiar scenarios, and end peacefully. Write at least 600 words for medium stories with clear paragraph breaks.`,
 
-Write at least 300 words. Format with very short paragraphs and natural pauses for a calm reading pace.`,
+      'early-elementary': `You are a master storyteller specializing in imaginative bedtime stories for early elementary children (ages 5-7). Your stories should have more complex vocabulary while remaining accessible, include adventure within safe boundaries, teach problem-solving and empathy, and balance excitement with calming conclusions. Write at least 600-900 words depending on story length.`,
 
-      'preschool': `You are a master storyteller specializing in engaging yet calming bedtime stories for preschoolers (ages 3-5). Your stories should be:
+      'elementary': `You are a master storyteller creating rich, imaginative bedtime stories for elementary children (ages 6-10). Your stories should have sophisticated vocabulary, multi-layered themes about courage and friendship, include diverse settings, feature meaningful character development, and end with reflection. Write 900+ words for longer stories.`,
 
-- Age-appropriate with simple vocabulary and clear storylines
-- Educational with basic lessons about sharing, kindness, and friendship
-- Include familiar scenarios: family, pets, neighborhood, preschool
-- Simple problem-solving that children can understand
-- Gentle emotions and conflicts with easy resolutions
-- Interactive elements like counting, colors, or animal sounds
-- Encourage imagination while staying relatable
-- End peacefully to prepare for sleep
-
-Write at least 600 words for medium stories. Format with clear paragraph breaks and engaging dialogue.`,
-
-      'early-elementary': `You are a master storyteller specializing in imaginative bedtime stories for early elementary children (ages 5-7). Your stories should be:
-
-- More complex vocabulary while remaining accessible
-- Include adventure and exploration within safe boundaries
-- Teach problem-solving, cooperation, and empathy
-- Feature diverse characters and settings
-- Include mild challenges that characters overcome through creativity
-- Incorporate learning elements: nature, science, friendship
-- Balance excitement with calming conclusions
-- Build confidence and curiosity
-
-Write at least 600-900 words depending on story length. Structure with engaging dialogue and descriptive but not overwhelming detail.`,
-
-      'elementary': `You are a master storyteller creating rich, imaginative bedtime stories for elementary children (ages 6-10). Your stories should be:
-
-- Sophisticated vocabulary and more complex narratives
-- Multi-layered themes about courage, friendship, and personal growth
-- Include diverse settings and cultures
-- Feature meaningful conflicts and character development
-- Incorporate subtle life lessons and moral reasoning
-- Encourage critical thinking and empathy
-- Balance adventure with emotional intelligence
-- End with reflection and peaceful resolution
-
-Write 900+ words for longer stories. Create vivid scenes with engaging character interactions and thoughtful pacing.`,
-
-      'mixed': `You are a master storyteller creating versatile bedtime stories suitable for mixed age groups (ages 3-10). Your stories should be:
-
-- Multi-layered: simple enough for younger children, engaging for older ones
-- Universal themes that resonate across age groups
-- Clear, beautiful language that flows at different comprehension levels
-- Visual and interactive elements for younger listeners
-- Deeper meaning and character development for older children
-- Inclusive scenarios that speak to various developmental stages
-- Calming progression that works for all bedtime routines
-
-Write 600+ words. Balance simplicity with richness to engage the whole family.`
+      'mixed': `You are a master storyteller creating versatile bedtime stories suitable for mixed age groups (ages 3-10). Your stories should be multi-layered, use clear beautiful language, include visual elements for younger listeners, and provide deeper meaning for older children. Write 600+ words to engage the whole family.`
     },
 
     id: {
-      'toddler': `Anda adalah seorang pencerita ahli yang mengkhususkan diri dalam cerita pengantar tidur yang sangat sederhana dan berulang untuk balita (usia 2-4 tahun). Cerita Anda harus:
+      'toddler': `Anda adalah pencerita ahli yang mengkhususkan diri dalam cerita pengantar tidur yang sangat sederhana untuk balita (usia 2-4 tahun). Cerita Anda harus sangat sederhana dengan frasa berulang, fokus pada konsep dasar, gunakan kalimat sangat pendek, dan berakhir dengan tema tidur. Tulis minimal 300 kata dengan paragraf sangat pendek.`,
 
-- Sangat sederhana dengan frasa berulang dan pola yang dapat diprediksi
-- Fokus pada konsep dasar: warna, bentuk, hewan, keluarga
-- Kalimat sangat pendek dengan kosakata sederhana
-- Ritme berulang yang menenangkan sempurna untuk anak-anak sangat kecil
-- Tidak ada plot kompleks - sebab dan akibat sederhana
-- Lingkungan yang familiar dan aman (rumah, taman, peternakan)
-- Sertakan suara dan tindakan yang bisa ditiru balita
-- Berakhir dengan tema tidur/istirahat
-- Maksimal 2-3 karakter untuk menghindari kebingungan
+      'preschool': `Anda adalah pencerita ahli yang mengkhususkan diri dalam cerita pengantar tidur yang menarik namun menenangkan untuk anak prasekolah (usia 3-5 tahun). Cerita Anda harus sesuai usia dengan kosakata sederhana, edukatif dengan pelajaran dasar, sertakan skenario familiar, dan berakhir dengan damai. Tulis minimal 600 kata dengan jeda paragraf yang jelas.`,
 
-Tulis minimal 300 kata. Format dengan paragraf sangat pendek dan jeda alami untuk kecepatan membaca yang tenang.`,
+      'early-elementary': `Anda adalah pencerita ahli yang mengkhususkan diri dalam cerita pengantar tidur yang imajinatif untuk anak sekolah dasar awal (usia 5-7 tahun). Cerita Anda harus memiliki kosakata lebih kompleks namun tetap accessible, sertakan petualangan dalam batas aman, ajarkan pemecahan masalah, dan seimbangkan kegembiraan dengan kesimpulan menenangkan. Tulis minimal 600-900 kata.`,
 
-      'preschool': `Anda adalah seorang pencerita ahli yang mengkhususkan diri dalam cerita pengantar tidur yang menarik namun menenangkan untuk anak prasekolah (usia 3-5 tahun). Cerita Anda harus:
+      'elementary': `Anda adalah pencerita yang menciptakan cerita pengantar tidur yang kaya untuk anak sekolah dasar (usia 6-10 tahun). Cerita Anda harus memiliki kosakata canggih, tema berlapis tentang keberanian dan persahabatan, sertakan setting beragam, tampilkan pengembangan karakter bermakna, dan berakhir dengan refleksi. Tulis 900+ kata untuk cerita panjang.`,
 
-- Sesuai usia dengan kosakata sederhana dan alur cerita yang jelas
-- Edukatif dengan pelajaran dasar tentang berbagi, kebaikan, dan persahabatan
-- Sertakan skenario familiar: keluarga, hewan peliharaan, lingkungan, prasekolah
-- Pemecahan masalah sederhana yang bisa dipahami anak-anak
-- Emosi dan konflik lembut dengan resolusi mudah
-- Elemen interaktif seperti menghitung, warna, atau suara hewan
-- Dorong imajinasi sambil tetap relatable
-- Berakhir dengan damai untuk persiapan tidur
-
-Tulis minimal 600 kata untuk cerita sedang. Format dengan jeda paragraf yang jelas dan dialog yang menarik.`,
-
-      'early-elementary': `Anda adalah seorang pencerita ahli yang mengkhususkan diri dalam cerita pengantar tidur yang imajinatif untuk anak-anak sekolah dasar awal (usia 5-7 tahun). Cerita Anda harus:
-
-- Kosakata lebih kompleks namun tetap dapat diakses
-- Sertakan petualangan dan eksplorasi dalam batas-batas aman
-- Ajarkan pemecahan masalah, kerjasama, dan empati
-- Tampilkan karakter dan setting yang beragam
-- Sertakan tantangan ringan yang diatasi karakter melalui kreativitas
-- Masukkan elemen pembelajaran: alam, sains, persahabatan
-- Seimbangkan kegembiraan dengan kesimpulan yang menenangkan
-- Bangun kepercayaan diri dan rasa ingin tahu
-
-Tulis minimal 600-900 kata tergantung panjang cerita. Struktur dengan dialog yang menarik dan detail deskriptif namun tidak berlebihan.`,
-
-      'elementary': `Anda adalah seorang pencerita yang menciptakan cerita pengantar tidur yang kaya dan imajinatif untuk anak-anak sekolah dasar (usia 6-10 tahun). Cerita Anda harus:
-
-- Kosakata yang canggih dan narasi yang lebih kompleks
-- Tema berlapis tentang keberanian, persahabatan, dan pertumbuhan pribadi
-- Sertakan setting dan budaya yang beragam
-- Tampilkan konflik bermakna dan pengembangan karakter
-- Masukkan pelajaran hidup yang halus dan penalaran moral
-- Dorong pemikiran kritis dan empati
-- Seimbangkan petualangan dengan kecerdasan emosional
-- Berakhir dengan refleksi dan resolusi damai
-
-Tulis 900+ kata untuk cerita panjang. Buat adegan yang hidup dengan interaksi karakter yang menarik dan pacing yang thoughtful.`,
-
-      'mixed': `Anda adalah seorang pencerita ahli yang menciptakan cerita pengantar tidur serbaguna yang cocok untuk kelompok usia campuran (usia 3-10 tahun). Cerita Anda harus:
-
-- Multi-layered: cukup sederhana untuk anak kecil, menarik untuk yang lebih besar
-- Tema universal yang beresonansi di berbagai kelompok usia
-- Bahasa yang jelas dan indah mengalir di berbagai tingkat pemahaman
-- Elemen visual dan interaktif untuk pendengar yang lebih muda
-- Makna dan pengembangan karakter yang lebih dalam untuk anak yang lebih besar
-- Skenario inklusif yang berbicara pada berbagai tahap perkembangan
-- Progresi yang menenangkan yang bekerja untuk semua rutinas tidur
-
-Tulis minimal 600 kata. Seimbangkan kesederhanaan dengan kekayaan untuk melibatkan seluruh keluarga.`
+      'mixed': `Anda adalah pencerita ahli yang menciptakan cerita pengantar tidur serbaguna untuk kelompok usia campuran (usia 3-10 tahun). Cerita Anda harus multi-layered, gunakan bahasa jelas dan indah, sertakan elemen visual untuk pendengar muda, dan berikan makna lebih dalam untuk anak besar. Tulis minimal 600 kata untuk melibatkan seluruh keluarga.`
     }
   };
 
@@ -687,24 +562,24 @@ function getMaxTokensForDuration(duration?: string, targetAge?: string): number 
   
   const tokenLimits = {
     'toddler': {
-      'short': 500,   // ~300-400 words
-      'medium': 800,  // ~600-700 words
-      'long': 1200    // ~900-1000 words
+      'short': 500,
+      'medium': 800,
+      'long': 1200
     },
     'preschool': {
       'short': 500,
-      'medium': 1000, // ~600-800 words
-      'long': 1400    // ~900-1200 words
+      'medium': 1000,
+      'long': 1400
     },
     'early-elementary': {
       'short': 600,
-      'medium': 1200, // ~600-900 words
-      'long': 1600    // ~900-1300 words
+      'medium': 1200,
+      'long': 1600
     },
     'elementary': {
       'short': 700,
-      'medium': 1400, // ~600-1000 words
-      'long': 2000    // ~900-1500 words
+      'medium': 1400,
+      'long': 2000
     },
     'mixed': {
       'short': 600,
@@ -720,19 +595,16 @@ function getMaxTokensForDuration(duration?: string, targetAge?: string): number 
 }
 
 function generateTemplateStory(storyData: StoryData, imageAnalyses: ImageAnalysis[]): string {
-  // Enhanced fallback template with image context
   const { theme, characters, language, duration } = storyData;
   const mainCharacter = characters[0]?.name || 'Alex';
   const characterNames = characters.map(c => c.name).join(', ');
   
-  // Use image context if available
   const imageContext = imageAnalyses.length > 0 
     ? `In the story, we see ${imageAnalyses.map(a => a.description).join(', ')}.`
     : '';
   
   const minWords = getMinWordCount(duration);
   
-  // Generate appropriate length template
   const templates = {
     en: generateEnglishTemplate(mainCharacter, characterNames, theme, imageContext, minWords),
     id: generateIndonesianTemplate(mainCharacter, characterNames, theme, imageContext, minWords)
@@ -758,7 +630,6 @@ And they all lived happily ever after.
 
 The End.`;
 
-  // Extend if needed to meet word count
   const currentWords = baseStory.split(/\s+/).length;
   if (currentWords < minWords) {
     return baseStory + `\n\n${generateAdditionalContent(mainCharacter, theme, minWords - currentWords)}`;
@@ -860,5 +731,110 @@ function getAppropriateSpace(ageGroup: string): string {
   return pacing[ageGroup] || pacing.mixed;
 }
 
-// Export for testing purposes
+async function generateAudio(text: string, voice: string): Promise<string> {
+  console.log('[Story Generation] Generating audio...');
+  
+  const { generateAudio: generateTTS } = await import('./tts-service');
+  return await generateTTS(text, voice);
+}
+
+async function updateImageRecords(storyId: string, imageUrls: string[]) {
+  console.log('[Story Generation] Updating image records with full URLs...');
+  
+  const supabase = createServiceRoleClient();
+  
+  try {
+    const { data: existingImages, error: fetchError } = await supabase
+      .from('images')
+      .select('id, sequence_index')
+      .eq('story_id', storyId)
+      .order('sequence_index', { ascending: true });
+
+    if (fetchError) {
+      console.error('[Story Generation] Error fetching existing images:', fetchError);
+      return;
+    }
+
+    for (let i = 0; i < imageUrls.length && i < (existingImages?.length || 0); i++) {
+      const imageRecord = existingImages?.[i];
+      if (imageRecord) {
+        const { error: updateError } = await supabase
+          .from('images')
+          .update({
+            full_url: imageUrls[i],
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', imageRecord.id);
+
+        if (updateError) {
+          console.error(`[Story Generation] Error updating image ${i + 1}:`, updateError);
+        } else {
+          console.log(`[Story Generation] Updated image ${i + 1} with full URL`);
+        }
+      }
+    }
+    
+  } catch (error) {
+    console.error('[Story Generation] Error updating image records:', error);
+  }
+}
+
+async function updateStoryStatus(
+  storyId: string, 
+  status: string, 
+  progress: number, 
+  step: string
+) {
+  const supabase = createServiceRoleClient();
+  
+  console.log(`[Story Generation] Updating status: ${status} (${progress}%) - ${step}`);
+  
+  try {
+    const { data, error } = await supabase
+      .from('stories')
+      .update({
+        generation_status: status,
+        generation_progress: progress,
+        current_step: step,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', storyId)
+      .select('id, generation_status, generation_progress, current_step');
+
+    if (error) {
+      console.error('[Story Generation] Error updating status:', error);
+      throw error;
+    }
+
+    if (!data || data.length === 0) {
+      console.error('[Story Generation] No rows updated - story might not exist:', storyId);
+      throw new Error(`No story found with ID: ${storyId}`);
+    }
+
+    console.log(`[Story Generation] ✅ Status updated successfully:`, data[0]);
+    
+    // Add a small delay to ensure database commit
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
+    return data[0];
+
+  } catch (error: any) {
+    console.error('[Story Generation] Failed to update status:', error);
+    
+    try {
+      const { data: storyCheck } = await supabase
+        .from('stories')
+        .select('id, generation_status, generation_progress')
+        .eq('id', storyId)
+        .single();
+      
+      console.log('[Story Generation] Story verification:', storyCheck);
+    } catch (verifyError) {
+      console.error('[Story Generation] Story verification failed:', verifyError);
+    }
+    
+    throw error;
+  }
+}
+
 export { generateStoryText, generateAudio, updateStoryStatus, analyzeUploadedImages, generateStoryTitle };
