@@ -37,7 +37,7 @@ export async function POST(
       console.error('[Story Retry] Error parsing story content:', parseError);
       originalStoryData = {
         characters: [],
-        voice: 'default-en-male',
+        voice: 'default-id-male',
         duration: 'medium',
         targetAge: 'mixed',
         theme: story.theme || 'adventure'
@@ -76,7 +76,7 @@ export async function POST(
       theme: story.theme || originalStoryData.theme || 'adventure',
       characters: originalStoryData.characters || [],
       language: story.language || 'en',
-      voice: originalStoryData.voice || 'default-en-male',
+      voice: originalStoryData.voice || 'default-id-male',
       duration: originalStoryData.duration || 'medium',
       targetAge: originalStoryData.targetAge || 'mixed',
       customPrompt: originalStoryData.customPrompt || '',

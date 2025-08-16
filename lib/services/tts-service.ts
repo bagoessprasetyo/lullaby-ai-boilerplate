@@ -26,57 +26,112 @@ const STORYTELLING_VOICE_SETTINGS: VoiceSettings = {
 
 // Model configurations
 const TTS_MODELS = {
-  turbo: 'eleven_turbo_v2',           // Fastest, good quality
+  turbo: 'eleven_multilingual_v2',           // Fastest, good quality
   multilingual: 'eleven_multilingual_v2', // Best for non-English
-  standard: 'eleven_monolingual_v1'   // Highest quality English
+  standard: 'eleven_multilingual_v2'   // Highest quality English
 };
 
-export async function generateAudio(text: string, voiceValue: string): Promise<string> {
+export async function generateAudio(text: string, voiceValue: string, language?: string): Promise<string> {
   console.log('[TTS Service] Starting audio generation...');
   console.log('[TTS Service] Voice:', voiceValue);
+  console.log('[TTS Service] Language:', language);
   console.log('[TTS Service] Text length:', text.length);
 
   try {
-    // Handle default/fallback voices vs ElevenLabs voices
-    if (voiceValue.startsWith('default-') || voiceValue.startsWith('fallback-')) {
-      console.log('[TTS Service] Using fallback TTS for default voice');
-      return await generateFallbackAudio(text, voiceValue);
-    }
-
-    // Use ElevenLabs for premium voices
-    return await generateElevenLabsAudio(text, voiceValue);
+    // Only use ElevenLabs - no fallback to other services
+    console.log('[TTS Service] Using ElevenLabs for voice:', voiceValue);
+    return await generateElevenLabsAudio(text, voiceValue, language);
 
   } catch (error: any) {
-    console.error('[TTS Service] Error generating audio:', error);
-    
-    // Fallback to default TTS if ElevenLabs fails
-    console.log('[TTS Service] Falling back to default TTS...');
-    return await generateFallbackAudio(text, voiceValue);
+    console.error('[TTS Service] ElevenLabs TTS failed:', error);
+    // Don't fallback to other services - throw the error to be handled upstream
+    throw new Error(`ElevenLabs TTS generation failed: ${error.message}`);
   }
 }
 
-async function generateElevenLabsAudio(text: string, voiceId: string): Promise<string> {
-  console.log('[TTS Service] Using ElevenLabs for voice:', voiceId);
+// Map default voice IDs to actual ElevenLabs voice IDs
+function mapVoiceId(voiceId: string): string {
+  const voiceMapping = {
+    'default-en-male': 'LruHrtVF6PSyGItzMNHS',     // English male
+    'default-en-female': 'i4CzbCVWoqvD0P1QJCUL',   // English female
+    'default-id-male': 'J7W4tJ2vGkG943akMc1X',     // Indonesian male
+    'default-id-female': 'iWydkXKoiVtvdn4vLKp9'    // Indonesian female
+  };
+  
+  return voiceMapping[voiceId] || voiceId;
+}
+
+// Map language to ElevenLabs language code
+function mapLanguageCode(language?: string): string {
+  const languageCodeMap: Record<string, string> = {
+    'en': 'en',
+    'id': 'id',
+    'fr': 'fr',
+    'ja': 'ja',
+    'english': 'en',
+    'indonesian': 'id',
+    'french': 'fr',
+    'japanese': 'ja'
+  };
+  
+  if (!language) return 'en'; // Default to English
+  return languageCodeMap[language.toLowerCase()] || 'en';
+}
+
+// Clean text for TTS generation by removing problematic characters
+function cleanTextForTTS(text: string): string {
+  return text
+    .replace(/[*#]/g, '')           // Remove asterisk and hash characters
+    .replace(/\s+/g, ' ')           // Replace multiple spaces with single space
+    .trim();                        // Remove leading/trailing whitespace
+}
+
+async function generateElevenLabsAudio(text: string, voiceId: string, language?: string): Promise<string> {
+  // Clean text for TTS generation
+  const cleanedText = cleanTextForTTS(text);
+  
+  // Map voice ID to actual ElevenLabs voice ID
+  const actualVoiceId = mapVoiceId(voiceId);
+  console.log('[TTS Service] Original voice ID:', voiceId);
+  console.log('[TTS Service] Mapped voice ID:', actualVoiceId);
+  console.log('[TTS Service] Language:', language);
+  console.log('[TTS Service] Original text length:', text.length);
+  console.log('[TTS Service] Cleaned text length:', cleanedText.length);
+  console.log('[TTS Service] Text preview:', cleanedText.substring(0, 100) + '...');
 
   const apiKey = process.env.ELEVENLABS_API_KEY;
   if (!apiKey) {
     throw new Error('ElevenLabs API key not configured');
   }
 
+  // Validate voice ID format
+  if (!actualVoiceId || actualVoiceId.length < 10) {
+    throw new Error(`Invalid ElevenLabs voice ID: ${actualVoiceId}`);
+  }
+
+  // Map language to language code
+  const languageCode = mapLanguageCode(language);
+  
   // Determine language and model
-  const isIndonesian = text.includes('Pada suatu ketika') || text.includes('Tamat.');
+  const isIndonesian = language === 'id' || language === 'indonesian' || cleanedText.includes('Pada suatu ketika') || cleanedText.includes('Tamat.');
   const modelId = isIndonesian ? TTS_MODELS.multilingual : TTS_MODELS.turbo;
 
   // Prepare request payload
   const payload = {
-    text: text,
+    text: cleanedText,
     model_id: modelId,
     voice_settings: STORYTELLING_VOICE_SETTINGS
   };
 
+  console.log('[TTS Service] Request payload:', {
+    textLength: cleanedText.length,
+    voiceId: actualVoiceId,
+    modelId,
+    voice_settings: STORYTELLING_VOICE_SETTINGS
+  });
   console.log('[TTS Service] Calling ElevenLabs API...');
   
-  const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+  const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${actualVoiceId}`, {
     method: 'POST',
     headers: {
       'Accept': 'audio/mpeg',
@@ -88,15 +143,27 @@ async function generateElevenLabsAudio(text: string, voiceId: string): Promise<s
 
   if (!response.ok) {
     const errorText = await response.text();
-    console.error('[TTS Service] ElevenLabs API Error:', response.status, errorText);
+    console.error('[TTS Service] ElevenLabs API Error:', {
+      status: response.status,
+      statusText: response.statusText,
+      errorText,
+      voiceId: actualVoiceId,
+      modelId
+    });
     throw new Error(`ElevenLabs API error: ${response.status} - ${errorText}`);
   }
 
-  console.log('[TTS Service] ElevenLabs response received, uploading to storage...');
+  console.log('[TTS Service] ElevenLabs response received successfully');
+  console.log('[TTS Service] Response headers:', Object.fromEntries(response.headers.entries()));
 
   // Get audio data as array buffer
   const audioBuffer = await response.arrayBuffer();
   const audioData = new Uint8Array(audioBuffer);
+  
+  console.log('[TTS Service] Audio data received:', {
+    size: audioData.length,
+    sizeKB: Math.round(audioData.length / 1024)
+  });
 
   // Upload to Supabase Storage
   return await uploadAudioToStorage(audioData, voiceId);
@@ -289,20 +356,22 @@ export function splitTextForTTS(text: string, maxLength: number = 5000): string[
 }
 
 // Enhanced audio generation with chunking for long stories
-export async function generateAudioWithChunking(text: string, voiceValue: string): Promise<string> {
-  const chunks = splitTextForTTS(text);
+export async function generateAudioWithChunking(text: string, voiceValue: string, language?: string): Promise<string> {
+  console.log('[TTS Service] Starting chunked audio generation...');
   
-  if (chunks.length === 1) {
-    return await generateAudio(text, voiceValue);
+  // For shorter texts, use direct generation
+  if (text.length <= 2500) {
+    return await generateAudio(text, voiceValue, language);
   }
 
+  const chunks = splitTextForTTS(text);
   console.log(`[TTS Service] Generating audio in ${chunks.length} chunks...`);
   
   // Generate audio for each chunk
   const audioUrls: string[] = [];
   for (let i = 0; i < chunks.length; i++) {
     console.log(`[TTS Service] Processing chunk ${i + 1}/${chunks.length}`);
-    const chunkAudio = await generateAudio(chunks[i], voiceValue);
+    const chunkAudio = await generateAudio(chunks[i], voiceValue, language);
     audioUrls.push(chunkAudio);
   }
 

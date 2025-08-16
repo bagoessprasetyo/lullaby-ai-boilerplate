@@ -52,7 +52,7 @@ export async function generateStoryAsync(storyId: string, storyData: StoryData) 
     await updateStoryStatus(storyId, 'generating', 60, 'audio-generation');
 
     // Step 5: Generate audio using ElevenLabs
-    const audioUrl = await generateAudio(storyText, storyData.voice);
+    const audioUrl = await generateAudio(storyText, storyData.voice, storyData.language);
     await updateStoryStatus(storyId, 'generating', 85, 'finalizing');
 
     // Step 6: Update images table with full URLs
@@ -482,12 +482,12 @@ async function updateImageRecords(storyId: string, imageUrls: string[]) {
 }
 
 // Import audio generation function
-async function generateAudio(text: string, voice: string): Promise<string> {
+async function generateAudio(text: string, voice: string, language?: string): Promise<string> {
   console.log('[Story Generation] Generating audio...');
   
   // Import the TTS service
   const { generateAudio: generateTTS } = await import('./tts-service');
-  return await generateTTS(text, voice);
+  return await generateTTS(text, voice, language);
 }
 
 async function updateStoryStatus(

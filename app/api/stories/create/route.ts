@@ -105,7 +105,7 @@ export async function POST(req: NextRequest) {
         // Store the form data as JSON for now
         content: JSON.stringify({
           characters: storyData.characters || [],
-          voice: storyData.voice || 'J7W4tJ2vGkG943akMc1X',
+          voice: storyData.voice || 'default-id-male',
           duration: storyData.duration || 'short',
           imageCount: imageFiles.length
         })

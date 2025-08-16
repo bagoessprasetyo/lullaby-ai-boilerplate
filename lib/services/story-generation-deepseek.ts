@@ -49,44 +49,56 @@ export async function generateStoryAsync(storyId: string, storyData: StoryData) 
   console.log('[Story Generation] Using AI service:', AI_CONFIG.preferredService);
   
   try {
-    // Step 1: Update status to generating
-    await updateStoryStatus(storyId, 'generating', 10, 'analyzing-images');
+    // Step 1: Update status to generating - STORY GENERATION STEP
+    await updateStoryStatus(storyId, 'generating', 10, 'story-generation');
     
-    // Step 2: Analyze uploaded images if any (always use OpenAI for vision)
+    // Step 2: Analyze uploaded images if any (part of story generation)
     let imageAnalyses: ImageAnalysis[] = [];
     if (storyData.uploadedImages && storyData.uploadedImages.length > 0) {
       console.log('[Story Generation] Analyzing uploaded images with OpenAI Vision...');
       imageAnalyses = await analyzeUploadedImages(storyData.uploadedImages);
-      await updateStoryStatus(storyId, 'generating', 25, 'generating-title');
+      await updateStoryStatus(storyId, 'generating', 25, 'story-generation');
     }
     
-    // Step 3: Generate story title using preferred AI service
+    // Step 3: Generate story title (part of story generation)
     const storyTitle = await generateStoryTitle(storyData, imageAnalyses);
     await updateStoryStatus(storyId, 'generating', 35, 'story-generation');
     
-    // Step 4: Generate story text using preferred AI service
+    // Step 4: Generate story text (complete story generation)
     const storyText = await generateStoryText(storyData, imageAnalyses);
     await updateStoryStatus(storyId, 'generating', 60, 'audio-generation');
+    
+    // Step 5: Generate audio - AUDIO GENERATION STEP
+    let audioUrl = null;
+    try {
+      console.log('[Story Generation] Starting TTS generation with ElevenLabs...');
+      audioUrl = await generateAudio(storyText, storyData.voice, storyData.language);
+      console.log('[Story Generation] TTS generation successful:', audioUrl ? 'Audio URL generated' : 'No audio URL');
+    } catch (audioError: any) {
+      console.error('[Story Generation] TTS generation failed:', audioError);
+      console.log('[Story Generation] Continuing story generation without audio...');
+      // Continue without audio - don't fail the entire story generation
+    }
+    await updateStoryStatus(storyId, 'generating', 85, 'image-generation');
 
-    // Step 5: Generate audio using ElevenLabs
-    const audioUrl = await generateAudio(storyText, storyData.voice);
-    await updateStoryStatus(storyId, 'generating', 85, 'finalizing');
-
-    // Step 6: Update images table with full URLs
+    // Step 6: Update images (IMAGE GENERATION/PROCESSING STEP)
     if (storyData.uploadedImages && storyData.uploadedImages.length > 0) {
       await updateImageRecords(storyId, storyData.uploadedImages);
     }
 
-    // Step 7: Save completed story - FIXED VERSION
-    await updateStoryStatus(storyId, 'generating', 95, 'saving');
+    // Step 7: Save completed story
+    await updateStoryStatus(storyId, 'generating', 95, 'image-generation');
     
-    // FIXED: Use the same robust pattern as updateStoryStatus
+    // FIXED: Ensure database update with proper delay and verification
     console.log('[Story Generation] Saving final story content...');
     console.log('[Story Generation] Content to save:', {
       titleLength: storyTitle?.length || 0,
       textLength: storyText?.length || 0,
       audioUrl: audioUrl?.substring(0, 50) + '...'
     });
+
+    // Add delay before final update to ensure previous updates are committed
+    await new Promise(resolve => setTimeout(resolve, 500));
 
     const { data: finalUpdate, error: updateError } = await supabase
       .from('stories')
@@ -100,7 +112,7 @@ export async function generateStoryAsync(storyId: string, storyData: StoryData) 
         updated_at: new Date().toISOString()
       })
       .eq('id', storyId)
-      .select('id, title, generation_status, generation_progress, current_step'); // FIXED: Force return
+      .select('id, title, generation_status, generation_progress, current_step');
 
     if (updateError) {
       console.error('[Story Generation] Final update error:', updateError);
@@ -113,6 +125,10 @@ export async function generateStoryAsync(storyId: string, storyData: StoryData) 
     }
 
     console.log('[Story Generation] ✅ Final story save successful:', finalUpdate[0]);
+    
+    // Add final delay to ensure completion status is committed
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
     console.log('[Story Generation] 🎉 Story generation fully completed for:', storyId);
 
   } catch (error: any) {
@@ -142,6 +158,78 @@ export async function generateStoryAsync(storyId: string, storyData: StoryData) 
   }
 }
 
+async function updateStoryStatus(
+  storyId: string, 
+  status: string, 
+  progress: number, 
+  step: string
+) {
+  const supabase = createServiceRoleClient();
+  
+  console.log(`[Story Generation] Updating status: ${status} (${progress}%) - ${step}`);
+  
+  try {
+    const { data, error } = await supabase
+      .from('stories')
+      .update({
+        generation_status: status,
+        generation_progress: progress,
+        current_step: step,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', storyId)
+      .select('id, generation_status, generation_progress, current_step');
+
+    if (error) {
+      console.error('[Story Generation] Error updating status:', error);
+      throw error;
+    }
+
+    if (!data || data.length === 0) {
+      console.error('[Story Generation] No rows updated - story might not exist:', storyId);
+      throw new Error(`No story found with ID: ${storyId}`);
+    }
+
+    console.log(`[Story Generation] ✅ Status updated successfully:`, data[0]);
+    
+    // FIXED: Add longer delay to ensure database commit and avoid race conditions
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    // Verify the update was actually committed by reading it back
+    const { data: verifyData, error: verifyError } = await supabase
+      .from('stories')
+      .select('generation_status, generation_progress, current_step')
+      .eq('id', storyId)
+      .single();
+    
+    if (verifyError) {
+      console.warn('[Story Generation] Could not verify status update:', verifyError);
+    } else {
+      console.log('[Story Generation] ✅ Status verified in database:', verifyData);
+    }
+    
+    return data[0];
+
+  } catch (error: any) {
+    console.error('[Story Generation] Failed to update status:', error);
+    
+    try {
+      const { data: storyCheck } = await supabase
+        .from('stories')
+        .select('id, generation_status, generation_progress')
+        .eq('id', storyId)
+        .single();
+      
+      console.log('[Story Generation] Story verification:', storyCheck);
+    } catch (verifyError) {
+      console.error('[Story Generation] Story verification failed:', verifyError);
+    }
+    
+    throw error;
+  }
+}
+
+// ... (keep all other existing functions like getAIClient, analyzeUploadedImages, etc.)
 async function getAIClient(): Promise<{ client: OpenAI; model: string; service: string }> {
   if (AI_CONFIG.preferredService === 'deepseek' && process.env.DEEPSEEK_API_KEY) {
     return {
@@ -172,15 +260,53 @@ async function analyzeUploadedImages(imageUrls: string[]): Promise<ImageAnalysis
   const analyses: ImageAnalysis[] = [];
   
   for (let i = 0; i < imageUrls.length; i++) {
-    try {
-      console.log(`[Story Generation] Analyzing image ${i + 1}/${imageUrls.length}:`, imageUrls[i]);
-      
-      const response = await openai.chat.completions.create({
-        model: AI_CONFIG.visionModel,
-        messages: [
-          {
-            role: "system",
-            content: `You are an expert at analyzing images for children's story creation. Analyze the image and provide detailed information that can be used to create an engaging bedtime story.
+    let retryCount = 0;
+    const maxRetries = 3;
+    let analysisSuccessful = false;
+
+    while (retryCount < maxRetries && !analysisSuccessful) {
+      try {
+        console.log(`[Story Generation] Analyzing image ${i + 1}/${imageUrls.length} (attempt ${retryCount + 1}):`, imageUrls[i]);
+        
+        // Try to fetch the image and convert to base64
+        let imageData: string;
+        try {
+          console.log(`[Story Generation] Fetching image for base64 conversion...`);
+          const imageResponse = await fetch(imageUrls[i], {
+            method: 'GET',
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (compatible; StoryGenerator/1.0)',
+            },
+            // Add timeout
+            signal: AbortSignal.timeout(10000) // 10 second timeout
+          });
+
+          if (!imageResponse.ok) {
+            throw new Error(`Failed to fetch image: ${imageResponse.status} ${imageResponse.statusText}`);
+          }
+
+          const imageBuffer = await imageResponse.arrayBuffer();
+          const imageBase64 = Buffer.from(imageBuffer).toString('base64');
+          
+          // Detect content type from response headers or URL
+          const contentType = imageResponse.headers.get('content-type') || 
+                             (imageUrls[i].toLowerCase().includes('.png') ? 'image/png' : 'image/jpeg');
+          
+          imageData = `data:${contentType};base64,${imageBase64}`;
+          console.log(`[Story Generation] Successfully converted image to base64 (${contentType})`);
+          
+        } catch (fetchError) {
+          console.warn(`[Story Generation] Failed to fetch image for base64, trying URL method:`, fetchError);
+          // Fallback to URL method
+          imageData = imageUrls[i];
+        }
+
+        const response = await openai.chat.completions.create({
+          model: AI_CONFIG.visionModel,
+          messages: [
+            {
+              role: "system",
+              content: `You are an expert at analyzing images for children's story creation. Analyze the image and provide detailed information that can be used to create an engaging bedtime story.
 
 Return your analysis in this JSON format:
 {
@@ -190,36 +316,66 @@ Return your analysis in this JSON format:
   "mood": "overall mood or atmosphere",
   "objects": ["notable", "objects", "or", "items"]
 }`
-          },
-          {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: "Please analyze this image for creating a children's bedtime story. Focus on characters, setting, mood, and story elements that would make a great story for kids."
-              },
-              {
-                type: "image_url",
-                image_url: {
-                  url: imageUrls[i],
-                  detail: "high"
+            },
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: "Please analyze this image for creating a children's bedtime story. Focus on characters, setting, mood, and story elements that would make a great story for kids."
+                },
+                {
+                  type: "image_url",
+                  image_url: {
+                    url: imageData,
+                    detail: "high"
+                  }
                 }
-              }
-            ]
-          }
-        ],
-        max_tokens: 500,
-        temperature: 0.3
-      });
+              ]
+            }
+          ],
+          max_tokens: 500,
+          temperature: 0.3
+        });
 
-      const analysisText = response.choices[0]?.message?.content;
-      if (analysisText) {
-        try {
-          const parsedAnalysis = JSON.parse(analysisText);
-          analyses.push(parsedAnalysis);
-        } catch (parseError) {
+        const analysisText = response.choices[0]?.message?.content;
+        if (analysisText) {
+          try {
+            const parsedAnalysis = JSON.parse(analysisText);
+            analyses.push(parsedAnalysis);
+            console.log(`[Story Generation] Image ${i + 1} analysis completed successfully`);
+            analysisSuccessful = true;
+          } catch (parseError) {
+            console.warn(`[Story Generation] Failed to parse JSON, using raw text:`, parseError);
+            analyses.push({
+              description: analysisText,
+              characters: [],
+              setting: "",
+              mood: "",
+              objects: []
+            });
+            analysisSuccessful = true;
+          }
+        } else {
+          throw new Error('No analysis content returned from OpenAI');
+        }
+        
+      } catch (error: any) {
+        retryCount++;
+        console.error(`[Story Generation] Error analyzing image ${i + 1} (attempt ${retryCount}):`, {
+          message: error.message,
+          code: error.code,
+          type: error.type,
+          status: error.status
+        });
+
+        if (retryCount < maxRetries) {
+          console.log(`[Story Generation] Retrying image analysis in ${retryCount * 2} seconds...`);
+          await new Promise(resolve => setTimeout(resolve, retryCount * 2000)); // Exponential backoff
+        } else {
+          console.error(`[Story Generation] Failed to analyze image ${i + 1} after ${maxRetries} attempts, skipping...`);
           analyses.push({
-            description: analysisText,
+            description: "Unable to analyze this image due to technical difficulties. The story will be created based on other provided information.",
             characters: [],
             setting: "",
             mood: "",
@@ -227,18 +383,6 @@ Return your analysis in this JSON format:
           });
         }
       }
-      
-      console.log(`[Story Generation] Image ${i + 1} analysis completed`);
-      
-    } catch (error: any) {
-      console.error(`[Story Generation] Error analyzing image ${i + 1}:`, error);
-      analyses.push({
-        description: "Unable to analyze this image",
-        characters: [],
-        setting: "",
-        mood: "",
-        objects: []
-      });
     }
   }
   
@@ -347,10 +491,10 @@ async function generateStoryText(storyData: StoryData, imageAnalyses: ImageAnaly
     const wordCount = generatedStory.trim().split(/\s+/).length;
     const minWords = getMinWordCount(storyData.duration);
     
-    if (wordCount < minWords) {
-      console.log(`[Story Generation] Story too short (${wordCount} words, need ${minWords}), extending...`);
-      return await extendStory(generatedStory, storyData, minWords - wordCount);
-    }
+    // if (wordCount < minWords) {
+    //   console.log(`[Story Generation] Story too short (${wordCount} words, need ${minWords}), extending...`);
+    //   return await extendStory(generatedStory, storyData, minWords - wordCount);
+    // }
     
     return generatedStory.trim();
 
@@ -362,49 +506,55 @@ async function generateStoryText(storyData: StoryData, imageAnalyses: ImageAnaly
   }
 }
 
-async function extendStory(originalStory: string, storyData: StoryData, additionalWords: number): Promise<string> {
-  console.log(`[Story Generation] Extending story by approximately ${additionalWords} words...`);
+async function generateAudio(text: string, voice: string, language?: string): Promise<string> {
+  console.log('[Story Generation] Generating audio...');
+  
+  const { generateAudio: generateTTS } = await import('./tts-service');
+  return await generateTTS(text, voice, language);
+}
+
+async function updateImageRecords(storyId: string, imageUrls: string[]) {
+  console.log('[Story Generation] Updating image records with full URLs...');
+  
+  const supabase = createServiceRoleClient();
   
   try {
-    const { client, model, service } = await getAIClient();
-    console.log(`[Story Generation] Using ${service} (${model}) for story extension`);
+    const { data: existingImages, error: fetchError } = await supabase
+      .from('images')
+      .select('id, sequence_index')
+      .eq('story_id', storyId)
+      .order('sequence_index', { ascending: true });
 
-    const response = await client.chat.completions.create({
-      model: model,
-      messages: [
-        {
-          role: "system",
-          content: `You are tasked with extending a children's bedtime story. Add approximately ${additionalWords} more words while maintaining the same style, tone, and quality. The extension should flow naturally and enhance the story.`
-        },
-        {
-          role: "user",
-          content: `Please extend this story by adding more descriptive details, character development, or plot elements. The extension should flow seamlessly with the existing content.
+    if (fetchError) {
+      console.error('[Story Generation] Error fetching existing images:', fetchError);
+      return;
+    }
 
-Current story:
-${originalStory}
+    for (let i = 0; i < imageUrls.length && i < (existingImages?.length || 0); i++) {
+      const imageRecord = existingImages?.[i];
+      if (imageRecord) {
+        const { error: updateError } = await supabase
+          .from('images')
+          .update({
+            full_url: imageUrls[i],
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', imageRecord.id);
 
-Add approximately ${additionalWords} more words while keeping the same ${storyData.language === 'id' ? 'Indonesian' : 'English'} language and ${storyData.theme} theme.`
+        if (updateError) {
+          console.error(`[Story Generation] Error updating image ${i + 1}:`, updateError);
+        } else {
+          console.log(`[Story Generation] Updated image ${i + 1} with full URL`);
         }
-      ],
-      max_tokens: Math.ceil(additionalWords * 1.5),
-      temperature: 0.7
-    });
-
-    const extendedStory = response.choices[0]?.message?.content;
-    
-    if (extendedStory) {
-      console.log(`[Story Generation] Story extended successfully using ${service}`);
-      return extendedStory.trim();
+      }
     }
     
   } catch (error) {
-    console.error('[Story Generation] Error extending story:', error);
+    console.error('[Story Generation] Error updating image records:', error);
   }
-  
-  return originalStory;
 }
 
-// Helper functions (keeping all existing implementations)
+// Helper functions (shortened for brevity - include all the existing ones)
 function generateFallbackTitle(storyData: StoryData, imageAnalyses: ImageAnalysis[]): string {
   const { theme, characters } = storyData;
   const mainCharacter = characters[0]?.name || 'Our Friend';
@@ -426,6 +576,108 @@ function generateFallbackTitle(storyData: StoryData, imageAnalyses: ImageAnalysi
   
   const titleTemplates = templates[storyData.language as keyof typeof templates] || templates.en;
   return titleTemplates[0];
+}
+
+function getAgeGroup(targetAge?: string): string {
+  if (!targetAge) return 'mixed';
+  
+  if (targetAge === '2-4') return 'toddler';
+  if (targetAge === '3-5') return 'preschool';
+  if (targetAge === '5-7') return 'early-elementary';
+  if (targetAge === '6-10') return 'elementary';
+  
+  return 'mixed';
+}
+
+function getAgeGroupDescription(ageGroup: string, language: string): string {
+  const descriptions = {
+    'toddler': { 'en': 'Toddlers (ages 2-4)', 'id': 'Balita (usia 2-4 tahun)' },
+    'preschool': { 'en': 'Preschoolers (ages 3-5)', 'id': 'Anak prasekolah (usia 3-5 tahun)' },
+    'early-elementary': { 'en': 'Early Elementary (ages 5-7)', 'id': 'Sekolah dasar awal (usia 5-7 tahun)' },
+    'elementary': { 'en': 'Elementary (ages 6-10)', 'id': 'Sekolah dasar (usia 6-10 tahun)' },
+    'mixed': { 'en': 'Mixed age groups (ages 3-10)', 'id': 'Kelompok usia campuran (usia 3-10 tahun)' }
+  };
+
+  return descriptions[ageGroup]?.[language] || descriptions.mixed[language] || descriptions.mixed.en;
+}
+
+function getMinWordCount(duration?: string): number {
+  const wordCounts = {
+    'short': 300,
+    'medium': 600,
+    'long': 900
+  };
+  
+  return wordCounts[duration as keyof typeof wordCounts] || wordCounts.medium;
+}
+
+function getMaxTokensForDuration(duration?: string, targetAge?: string): number {
+  const ageGroup = getAgeGroup(targetAge);
+  
+  const tokenLimits = {
+    'toddler': {
+      'short': 500,
+      'medium': 800,
+      'long': 1200
+    },
+    'preschool': {
+      'short': 500,
+      'medium': 1000,
+      'long': 1400
+    },
+    'early-elementary': {
+      'short': 600,
+      'medium': 1200,
+      'long': 1600
+    },
+    'elementary': {
+      'short': 700,
+      'medium': 1400,
+      'long': 2000
+    },
+    'mixed': {
+      'short': 600,
+      'medium': 1200,
+      'long': 1600
+    }
+  };
+  
+  const durationKey = duration || 'medium';
+  const ageTokens = tokenLimits[ageGroup] || tokenLimits.mixed;
+  
+  return ageTokens[durationKey as keyof typeof ageTokens] || ageTokens.medium;
+}
+
+function getSystemPrompt(language: string, targetAge?: string): string {
+  const ageGroup = getAgeGroup(targetAge);
+  
+  const prompts = {
+    en: {
+      'toddler': `You are a master storyteller specializing in very simple, repetitive bedtime stories for toddlers (ages 2-4). Your stories should be extremely simple with repetitive phrases, focus on basic concepts, use very short sentences, and end with sleeping/resting themes. Write at least 300 words with very short paragraphs and natural pauses.`,
+
+      'preschool': `You are a master storyteller specializing in engaging yet calming bedtime stories for preschoolers (ages 3-5). Your stories should be age-appropriate with simple vocabulary, educational with basic lessons about sharing and kindness, include familiar scenarios, and end peacefully. Write at least 600 words for medium stories with clear paragraph breaks.`,
+
+      'early-elementary': `You are a master storyteller specializing in imaginative bedtime stories for early elementary children (ages 5-7). Your stories should have more complex vocabulary while remaining accessible, include adventure within safe boundaries, teach problem-solving and empathy, and balance excitement with calming conclusions. Write at least 600-900 words depending on story length.`,
+
+      'elementary': `You are a master storyteller creating rich, imaginative bedtime stories for elementary children (ages 6-10). Your stories should have sophisticated vocabulary, multi-layered themes about courage and friendship, include diverse settings, feature meaningful character development, and end with reflection. Write 900+ words for longer stories.`,
+
+      'mixed': `You are a master storyteller creating versatile bedtime stories suitable for mixed age groups (ages 3-10). Your stories should be multi-layered, use clear beautiful language, include visual elements for younger listeners, and provide deeper meaning for older children. Write 600+ words to engage the whole family.`
+    },
+
+    id: {
+      'toddler': `Anda adalah pencerita ahli yang mengkhususkan diri dalam cerita pengantar tidur yang sangat sederhana untuk balita (usia 2-4 tahun). Cerita Anda harus sangat sederhana dengan frasa berulang, fokus pada konsep dasar, gunakan kalimat sangat pendek, dan berakhir dengan tema tidur. Tulis minimal 300 kata dengan paragraf sangat pendek.`,
+
+      'preschool': `Anda adalah pencerita ahli yang mengkhususkan diri dalam cerita pengantar tidur yang menarik namun menenangkan untuk anak prasekolah (usia 3-5 tahun). Cerita Anda harus sesuai usia dengan kosakata sederhana, edukatif dengan pelajaran dasar, sertakan skenario familiar, dan berakhir dengan damai. Tulis minimal 600 kata dengan jeda paragraf yang jelas.`,
+
+      'early-elementary': `Anda adalah pencerita ahli yang mengkhususkan diri dalam cerita pengantar tidur yang imajinatif untuk anak sekolah dasar awal (usia 5-7 tahun). Cerita Anda harus memiliki kosakata lebih kompleks namun tetap accessible, sertakan petualangan dalam batas aman, ajarkan pemecahan masalah, dan seimbangkan kegembiraan dengan kesimpulan menenangkan. Tulis minimal 600-900 kata.`,
+
+      'elementary': `Anda adalah pencerita yang menciptakan cerita pengantar tidur yang kaya untuk anak sekolah dasar (usia 6-10 tahun). Cerita Anda harus memiliki kosakata canggih, tema berlapis tentang keberanian dan persahabatan, sertakan setting beragam, tampilkan pengembangan karakter bermakna, dan berakhir dengan refleksi. Tulis 900+ kata untuk cerita panjang.`,
+
+      'mixed': `Anda adalah pencerita ahli yang menciptakan cerita pengantar tidur serbaguna untuk kelompok usia campuran (usia 3-10 tahun). Cerita Anda harus multi-layered, gunakan bahasa jelas dan indah, sertakan elemen visual untuk pendengar muda, dan berikan makna lebih dalam untuk anak besar. Tulis minimal 600 kata untuk melibatkan seluruh keluarga.`
+    }
+  };
+
+  return prompts[language as keyof typeof prompts]?.[ageGroup] || prompts.en.mixed;
 }
 
 function buildEnhancedStoryPrompt(storyData: StoryData, imageAnalyses: ImageAnalysis[]): string {
@@ -473,125 +725,51 @@ ${wordCountGuidance}
 **SPECIAL REQUIREMENTS**:
 ${customPrompt ? `- ${customPrompt}` : '- None specified'}
 
-**STORY STRUCTURE**:
-- Engaging opening that hooks the audience
-- Clear story arc with ${getConflictComplexity(ageGroup)}
-- Rich descriptions that bring the story to life
-- Natural dialogue between characters
-- ${getThematicElements(ageGroup)}
-- ${getEndingStyle(ageGroup)}
-
-**WRITING STYLE**:
-- Use ${getVocabularyGuidance(ageGroup)}
-- Write in flowing, natural sentences perfect for reading aloud
-- Include sensory details (what characters see, hear, feel)
-- Maintain ${getAppropriateSpace(ageGroup)} throughout the story
-
 Write the complete story now. Remember to meet the minimum word count requirement.`;
 
   return prompt;
 }
 
-function getMinWordCount(duration?: string): number {
-  const wordCounts = {
-    'short': 300,
-    'medium': 600,
-    'long': 900
-  };
+async function extendStory(originalStory: string, storyData: StoryData, additionalWords: number): Promise<string> {
+  console.log(`[Story Generation] Extending story by approximately ${additionalWords} words...`);
   
-  return wordCounts[duration as keyof typeof wordCounts] || wordCounts.medium;
-}
+  try {
+    const { client, model, service } = await getAIClient();
+    console.log(`[Story Generation] Using ${service} (${model}) for story extension`);
 
-function getSystemPrompt(language: string, targetAge?: string): string {
-  const ageGroup = getAgeGroup(targetAge);
-  
-  const prompts = {
-    en: {
-      'toddler': `You are a master storyteller specializing in very simple, repetitive bedtime stories for toddlers (ages 2-4). Your stories should be extremely simple with repetitive phrases, focus on basic concepts, use very short sentences, and end with sleeping/resting themes. Write at least 300 words with very short paragraphs and natural pauses.`,
+    const response = await client.chat.completions.create({
+      model: model,
+      messages: [
+        {
+          role: "system",
+          content: `You are tasked with extending a children's bedtime story. Add approximately ${additionalWords} more words while maintaining the same style, tone, and quality. The extension should flow naturally and enhance the story.`
+        },
+        {
+          role: "user",
+          content: `Please extend this story by adding more descriptive details, character development, or plot elements. The extension should flow seamlessly with the existing content.
 
-      'preschool': `You are a master storyteller specializing in engaging yet calming bedtime stories for preschoolers (ages 3-5). Your stories should be age-appropriate with simple vocabulary, educational with basic lessons about sharing and kindness, include familiar scenarios, and end peacefully. Write at least 600 words for medium stories with clear paragraph breaks.`,
+Current story:
+${originalStory}
 
-      'early-elementary': `You are a master storyteller specializing in imaginative bedtime stories for early elementary children (ages 5-7). Your stories should have more complex vocabulary while remaining accessible, include adventure within safe boundaries, teach problem-solving and empathy, and balance excitement with calming conclusions. Write at least 600-900 words depending on story length.`,
+Add approximately ${additionalWords} more words while keeping the same ${storyData.language === 'id' ? 'Indonesian' : 'English'} language and ${storyData.theme} theme.`
+        }
+      ],
+      max_tokens: Math.ceil(additionalWords * 1.5),
+      temperature: 0.7
+    });
 
-      'elementary': `You are a master storyteller creating rich, imaginative bedtime stories for elementary children (ages 6-10). Your stories should have sophisticated vocabulary, multi-layered themes about courage and friendship, include diverse settings, feature meaningful character development, and end with reflection. Write 900+ words for longer stories.`,
-
-      'mixed': `You are a master storyteller creating versatile bedtime stories suitable for mixed age groups (ages 3-10). Your stories should be multi-layered, use clear beautiful language, include visual elements for younger listeners, and provide deeper meaning for older children. Write 600+ words to engage the whole family.`
-    },
-
-    id: {
-      'toddler': `Anda adalah pencerita ahli yang mengkhususkan diri dalam cerita pengantar tidur yang sangat sederhana untuk balita (usia 2-4 tahun). Cerita Anda harus sangat sederhana dengan frasa berulang, fokus pada konsep dasar, gunakan kalimat sangat pendek, dan berakhir dengan tema tidur. Tulis minimal 300 kata dengan paragraf sangat pendek.`,
-
-      'preschool': `Anda adalah pencerita ahli yang mengkhususkan diri dalam cerita pengantar tidur yang menarik namun menenangkan untuk anak prasekolah (usia 3-5 tahun). Cerita Anda harus sesuai usia dengan kosakata sederhana, edukatif dengan pelajaran dasar, sertakan skenario familiar, dan berakhir dengan damai. Tulis minimal 600 kata dengan jeda paragraf yang jelas.`,
-
-      'early-elementary': `Anda adalah pencerita ahli yang mengkhususkan diri dalam cerita pengantar tidur yang imajinatif untuk anak sekolah dasar awal (usia 5-7 tahun). Cerita Anda harus memiliki kosakata lebih kompleks namun tetap accessible, sertakan petualangan dalam batas aman, ajarkan pemecahan masalah, dan seimbangkan kegembiraan dengan kesimpulan menenangkan. Tulis minimal 600-900 kata.`,
-
-      'elementary': `Anda adalah pencerita yang menciptakan cerita pengantar tidur yang kaya untuk anak sekolah dasar (usia 6-10 tahun). Cerita Anda harus memiliki kosakata canggih, tema berlapis tentang keberanian dan persahabatan, sertakan setting beragam, tampilkan pengembangan karakter bermakna, dan berakhir dengan refleksi. Tulis 900+ kata untuk cerita panjang.`,
-
-      'mixed': `Anda adalah pencerita ahli yang menciptakan cerita pengantar tidur serbaguna untuk kelompok usia campuran (usia 3-10 tahun). Cerita Anda harus multi-layered, gunakan bahasa jelas dan indah, sertakan elemen visual untuk pendengar muda, dan berikan makna lebih dalam untuk anak besar. Tulis minimal 600 kata untuk melibatkan seluruh keluarga.`
+    const extendedStory = response.choices[0]?.message?.content;
+    
+    if (extendedStory) {
+      console.log(`[Story Generation] Story extended successfully using ${service}`);
+      return extendedStory.trim();
     }
-  };
-
-  return prompts[language as keyof typeof prompts]?.[ageGroup] || prompts.en.mixed;
-}
-
-function getAgeGroup(targetAge?: string): string {
-  if (!targetAge) return 'mixed';
+    
+  } catch (error) {
+    console.error('[Story Generation] Error extending story:', error);
+  }
   
-  if (targetAge === '2-4') return 'toddler';
-  if (targetAge === '3-5') return 'preschool';
-  if (targetAge === '5-7') return 'early-elementary';
-  if (targetAge === '6-10') return 'elementary';
-  
-  return 'mixed';
-}
-
-function getAgeGroupDescription(ageGroup: string, language: string): string {
-  const descriptions = {
-    'toddler': { 'en': 'Toddlers (ages 2-4)', 'id': 'Balita (usia 2-4 tahun)' },
-    'preschool': { 'en': 'Preschoolers (ages 3-5)', 'id': 'Anak prasekolah (usia 3-5 tahun)' },
-    'early-elementary': { 'en': 'Early Elementary (ages 5-7)', 'id': 'Sekolah dasar awal (usia 5-7 tahun)' },
-    'elementary': { 'en': 'Elementary (ages 6-10)', 'id': 'Sekolah dasar (usia 6-10 tahun)' },
-    'mixed': { 'en': 'Mixed age groups (ages 3-10)', 'id': 'Kelompok usia campuran (usia 3-10 tahun)' }
-  };
-
-  return descriptions[ageGroup]?.[language] || descriptions.mixed[language] || descriptions.mixed.en;
-}
-
-function getMaxTokensForDuration(duration?: string, targetAge?: string): number {
-  const ageGroup = getAgeGroup(targetAge);
-  
-  const tokenLimits = {
-    'toddler': {
-      'short': 500,
-      'medium': 800,
-      'long': 1200
-    },
-    'preschool': {
-      'short': 500,
-      'medium': 1000,
-      'long': 1400
-    },
-    'early-elementary': {
-      'short': 600,
-      'medium': 1200,
-      'long': 1600
-    },
-    'elementary': {
-      'short': 700,
-      'medium': 1400,
-      'long': 2000
-    },
-    'mixed': {
-      'short': 600,
-      'medium': 1200,
-      'long': 1600
-    }
-  };
-  
-  const durationKey = duration || 'medium';
-  const ageTokens = tokenLimits[ageGroup] || tokenLimits.mixed;
-  
-  return ageTokens[durationKey as keyof typeof ageTokens] || ageTokens.medium;
+  return originalStory;
 }
 
 function generateTemplateStory(storyData: StoryData, imageAnalyses: ImageAnalysis[]): string {
@@ -669,172 +847,6 @@ function generateAdditionalContent(character: string, theme: string, additionalW
   }
   
   return `During their journey, ${character} and their friends experienced many wonderful things. They learned about the importance of helping each other and always being kind to all the creatures they met. Each day brought new adventures and valuable lessons that they would remember forever.`;
-}
-
-function getConflictComplexity(ageGroup: string): string {
-  const conflicts = {
-    'toddler': 'very simple situations like finding a lost toy or helping a friend',
-    'preschool': 'gentle challenges like sharing toys or solving simple problems',
-    'early-elementary': 'mild conflicts that require creativity and cooperation to resolve',
-    'elementary': 'meaningful challenges that promote character growth and moral reasoning',
-    'mixed': 'layered conflicts that can be understood at different levels'
-  };
-  
-  return conflicts[ageGroup] || conflicts.mixed;
-}
-
-function getThematicElements(ageGroup: string): string {
-  const themes = {
-    'toddler': 'basic concepts like family love, safety, and comfort',
-    'preschool': 'friendship, sharing, and simple emotional understanding',
-    'early-elementary': 'cooperation, empathy, and problem-solving skills',
-    'elementary': 'personal growth, moral choices, and emotional intelligence',
-    'mixed': 'universal themes of love, kindness, and belonging'
-  };
-  
-  return themes[ageGroup] || themes.mixed;
-}
-
-function getVocabularyGuidance(ageGroup: string): string {
-  const vocabulary = {
-    'toddler': 'very simple, repetitive words and short sentences',
-    'preschool': 'clear, accessible language with some descriptive words',
-    'early-elementary': 'age-appropriate vocabulary with occasional new words in context',
-    'elementary': 'rich vocabulary that challenges while remaining comprehensible',
-    'mixed': 'layered language that works for multiple reading levels'
-  };
-  
-  return vocabulary[ageGroup] || vocabulary.mixed;
-}
-
-function getEndingStyle(ageGroup: string): string {
-  const endings = {
-    'toddler': 'a very peaceful, sleepy conclusion with familiar comfort',
-    'preschool': 'a happy, satisfying ending that reinforces positive feelings',
-    'early-elementary': 'a thoughtful conclusion that ties together the story\'s lessons',
-    'elementary': 'a meaningful resolution that encourages reflection and growth',
-    'mixed': 'a universally satisfying ending that provides closure for all ages'
-  };
-  
-  return endings[ageGroup] || endings.mixed;
-}
-
-function getAppropriateSpace(ageGroup: string): string {
-  const pacing = {
-    'toddler': 'a very slow, gentle pace',
-    'preschool': 'a steady, comfortable pace',
-    'early-elementary': 'a balanced pace with moments of excitement and calm',
-    'elementary': 'dynamic pacing that builds tension and provides resolution',
-    'mixed': 'varied pacing that maintains engagement for all ages'
-  };
-  
-  return pacing[ageGroup] || pacing.mixed;
-}
-
-async function generateAudio(text: string, voice: string): Promise<string> {
-  console.log('[Story Generation] Generating audio...');
-  
-  const { generateAudio: generateTTS } = await import('./tts-service');
-  return await generateTTS(text, voice);
-}
-
-async function updateImageRecords(storyId: string, imageUrls: string[]) {
-  console.log('[Story Generation] Updating image records with full URLs...');
-  
-  const supabase = createServiceRoleClient();
-  
-  try {
-    const { data: existingImages, error: fetchError } = await supabase
-      .from('images')
-      .select('id, sequence_index')
-      .eq('story_id', storyId)
-      .order('sequence_index', { ascending: true });
-
-    if (fetchError) {
-      console.error('[Story Generation] Error fetching existing images:', fetchError);
-      return;
-    }
-
-    for (let i = 0; i < imageUrls.length && i < (existingImages?.length || 0); i++) {
-      const imageRecord = existingImages?.[i];
-      if (imageRecord) {
-        const { error: updateError } = await supabase
-          .from('images')
-          .update({
-            full_url: imageUrls[i],
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', imageRecord.id);
-
-        if (updateError) {
-          console.error(`[Story Generation] Error updating image ${i + 1}:`, updateError);
-        } else {
-          console.log(`[Story Generation] Updated image ${i + 1} with full URL`);
-        }
-      }
-    }
-    
-  } catch (error) {
-    console.error('[Story Generation] Error updating image records:', error);
-  }
-}
-
-async function updateStoryStatus(
-  storyId: string, 
-  status: string, 
-  progress: number, 
-  step: string
-) {
-  const supabase = createServiceRoleClient();
-  
-  console.log(`[Story Generation] Updating status: ${status} (${progress}%) - ${step}`);
-  
-  try {
-    const { data, error } = await supabase
-      .from('stories')
-      .update({
-        generation_status: status,
-        generation_progress: progress,
-        current_step: step,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', storyId)
-      .select('id, generation_status, generation_progress, current_step');
-
-    if (error) {
-      console.error('[Story Generation] Error updating status:', error);
-      throw error;
-    }
-
-    if (!data || data.length === 0) {
-      console.error('[Story Generation] No rows updated - story might not exist:', storyId);
-      throw new Error(`No story found with ID: ${storyId}`);
-    }
-
-    console.log(`[Story Generation] ✅ Status updated successfully:`, data[0]);
-    
-    // Add a small delay to ensure database commit
-    await new Promise(resolve => setTimeout(resolve, 100));
-    
-    return data[0];
-
-  } catch (error: any) {
-    console.error('[Story Generation] Failed to update status:', error);
-    
-    try {
-      const { data: storyCheck } = await supabase
-        .from('stories')
-        .select('id, generation_status, generation_progress')
-        .eq('id', storyId)
-        .single();
-      
-      console.log('[Story Generation] Story verification:', storyCheck);
-    } catch (verifyError) {
-      console.error('[Story Generation] Story verification failed:', verifyError);
-    }
-    
-    throw error;
-  }
 }
 
 export { generateStoryText, generateAudio, updateStoryStatus, analyzeUploadedImages, generateStoryTitle };

@@ -24,10 +24,13 @@ interface StoryStatus {
   progress: number;
   error?: string;
   estimatedTimeRemaining?: number;
+  timestamp?: string;
 }
 
 export default function StoryCreatingPage({ params }: { params: { id: string } }) {
   const [storyStatus, setStoryStatus] = useState<StoryStatus | null>(null);
+  const [lastUpdateTimestamp, setLastUpdateTimestamp] = useState<string>('');
+  const [pollCount, setPollCount] = useState(0);
   const [steps, setSteps] = useState<GenerationStep[]>([
     {
       id: 'story-generation',
@@ -45,8 +48,8 @@ export default function StoryCreatingPage({ params }: { params: { id: string } }
     },
     {
       id: 'image-generation',
-      title: 'Generating Illustrations', 
-      description: 'Creating magical illustrations to bring your story to life',
+      title: 'Processing Images', 
+      description: 'Finalizing and processing your story images',
       icon: <Image className="w-5 h-5" />,
       status: 'pending'
     }
@@ -57,31 +60,61 @@ export default function StoryCreatingPage({ params }: { params: { id: string } }
 
   useEffect(() => {
     let pollInterval: NodeJS.Timeout;
+    let consecutiveErrors = 0;
+    const maxConsecutiveErrors = 5;
 
     const pollStoryStatus = async () => {
       try {
-        const response = await fetch(`/api/stories/${params.id}/status`);
+        console.log(`[Story Status] Poll #${pollCount + 1} for story:`, params.id);
+        
+        const response = await fetch(`/api/stories/${params.id}/status?t=${Date.now()}`);
         
         if (!response.ok) {
-          throw new Error('Failed to fetch story status');
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
 
         const status: StoryStatus = await response.json();
-        setStoryStatus(status);
+        console.log('[Story Status] Received status:', status);
+        
+        // Check if this is actually a new update or if status is completed
+        const isNewUpdate = !lastUpdateTimestamp || 
+                           status.timestamp !== lastUpdateTimestamp ||
+                           status.progress !== storyStatus?.progress ||
+                           status.currentStep !== storyStatus?.currentStep ||
+                           status.status === 'completed'; // Always update if completed
 
-        // Update steps based on current status
-        setSteps(prevSteps => prevSteps.map(step => {
-          if (status.currentStep === step.id) {
-            return { ...step, status: 'in-progress', progress: status.progress };
-          } else if (isStepCompleted(step.id, status.currentStep)) {
-            return { ...step, status: 'completed', progress: 100 };
-          } else {
-            return { ...step, status: 'pending' };
-          }
-        }));
+        if (isNewUpdate) {
+          console.log('[Story Status] Processing new update:', {
+            oldStep: storyStatus?.currentStep,
+            newStep: status.currentStep,
+            oldProgress: storyStatus?.progress,
+            newProgress: status.progress,
+            isCompleted: status.status === 'completed'
+          });
+          
+          setStoryStatus(status);
+          setLastUpdateTimestamp(status.timestamp || '');
+          
+          // Update steps based on current status
+          setSteps(prevSteps => prevSteps.map(step => {
+            if (status.currentStep === step.id) {
+              return { ...step, status: 'in-progress', progress: status.progress };
+            } else if (isStepCompleted(step.id, status.currentStep)) {
+              return { ...step, status: 'completed', progress: 100 };
+            } else {
+              return { ...step, status: 'pending' };
+            }
+          }));
+        } else {
+          console.log('[Story Status] No new updates, timestamp/progress unchanged');
+        }
+
+        // Reset error counter on successful request
+        consecutiveErrors = 0;
 
         // Handle completion
         if (status.status === 'completed') {
+          console.log('[Story Status] Story completed, clearing interval');
           clearInterval(pollInterval);
           toast({
             title: "Success",
@@ -96,6 +129,7 @@ export default function StoryCreatingPage({ params }: { params: { id: string } }
 
         // Handle errors
         if (status.status === 'error') {
+          console.log('[Story Status] Story generation error detected');
           clearInterval(pollInterval);
           setSteps(prevSteps => prevSteps.map(step => 
             step.id === status.currentStep 
@@ -104,21 +138,38 @@ export default function StoryCreatingPage({ params }: { params: { id: string } }
           ));
         }
 
+        setPollCount(prev => prev + 1);
+
       } catch (error) {
-        console.error('Error polling story status:', error);
-        toast({
-          variant: "destructive",
-          title: "Error",
-          description: "Failed to check story status"
-        });
+        consecutiveErrors++;
+        console.error(`[Story Status] Error polling story status (${consecutiveErrors}/${maxConsecutiveErrors}):`, error);
+        
+        if (consecutiveErrors >= maxConsecutiveErrors) {
+          clearInterval(pollInterval);
+          toast({
+            variant: "destructive",
+            title: "Connection Error",
+            description: "Unable to check story status. Please refresh the page to try again."
+          });
+        }
       }
     };
 
     // Start polling immediately
     pollStoryStatus();
     
-    // Set up interval polling
-    pollInterval = setInterval(pollStoryStatus, 3000);
+    // Set up interval polling - reduce frequency after initial polls
+    const getPollingInterval = () => {
+      if (pollCount < 15) return 1500; // First 15 polls every 1.5 seconds (faster initial polling)
+      if (pollCount < 40) return 2500; // Next 25 polls every 2.5 seconds  
+      return 4000; // After that, every 4 seconds
+    };
+
+    const startPolling = () => {
+      pollInterval = setInterval(pollStoryStatus, getPollingInterval());
+    };
+
+    startPolling();
 
     // Cleanup
     return () => {
@@ -126,17 +177,25 @@ export default function StoryCreatingPage({ params }: { params: { id: string } }
         clearInterval(pollInterval);
       }
     };
-  }, [params.id, router, toast]);
+  }, [params.id, router, toast]); // Removed pollCount from dependencies to avoid re-creating effect
 
   const isStepCompleted = (stepId: string, currentStep: string): boolean => {
     const stepOrder = ['story-generation', 'audio-generation', 'image-generation'];
     const stepIndex = stepOrder.indexOf(stepId);
     const currentIndex = stepOrder.indexOf(currentStep);
+    
+    // If currentStep is 'completed', mark all steps as completed
+    if (currentStep === 'completed') {
+      return true;
+    }
+    
     return stepIndex < currentIndex;
   };
 
   const handleRetry = async () => {
     try {
+      console.log('[Story Retry] Retrying story:', params.id);
+      
       const response = await fetch(`/api/stories/${params.id}/retry`, {
         method: 'POST'
       });
@@ -148,14 +207,19 @@ export default function StoryCreatingPage({ params }: { params: { id: string } }
         });
         // Reset all steps to pending
         setSteps(steps => steps.map(step => ({ ...step, status: 'pending' })));
+        setStoryStatus(null);
+        setLastUpdateTimestamp('');
+        setPollCount(0);
       } else {
-        throw new Error('Failed to retry');
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to retry');
       }
-    } catch (error) {
+    } catch (error: any) {
+      console.error('[Story Retry] Error:', error);
       toast({
         variant: "destructive",
         title: "Error",
-        description: "Failed to retry story generation"
+        description: error.message || "Failed to retry story generation"
       });
     }
   };
@@ -188,6 +252,7 @@ export default function StoryCreatingPage({ params }: { params: { id: string } }
         <div className="text-center space-y-4">
           <Loader2 className="w-8 h-8 animate-spin mx-auto" />
           <p>Initializing story creation...</p>
+          <p className="text-xs text-muted-foreground">Poll #{pollCount}</p>
         </div>
       </div>
     );
@@ -201,6 +266,10 @@ export default function StoryCreatingPage({ params }: { params: { id: string } }
           <h1 className="text-3xl font-bold mb-2">Creating Your Magical Story</h1>
           <p className="text-muted-foreground">
             Our AI is working hard to bring your story to life
+          </p>
+          {/* Debug info */}
+          <p className="text-xs text-muted-foreground mt-2">
+            Poll #{pollCount} | Status: {storyStatus.status} | Step: {storyStatus.currentStep}
           </p>
         </div>
 
